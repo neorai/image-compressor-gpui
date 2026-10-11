@@ -1,0 +1,30 @@
+[package]
+name = "image-compressor"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.92"
+description = "Desktop JPEG compressor built with Rust and GPUI Kit"
+license = "MIT"
+publish = false
+
+[dependencies]
+crossbeam-channel = "0.5.16"
+gpui-kit = "0.7.1"
+image = { version = "0.25.10", default-features = false, features = ["bmp", "jpeg", "png", "tiff", "webp"] }
+rfd = "0.17.2"
+rusqlite = { version = "0.40.1", features = ["bundled"] }
+sha2 = "0.11.0"
+tempfile = "3.27.0"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = "debuginfo"
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+correctness = "deny"
+perf = "warn"
+suspicious = "deny"

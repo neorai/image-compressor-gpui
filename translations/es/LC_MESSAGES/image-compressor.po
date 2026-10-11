@@ -1,0 +1,296 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: image-compressor 0.2.0\n"
+"Language: es\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "Image Compressor"
+msgstr "Compresor de imágenes"
+
+msgid "Select a folder to begin."
+msgstr "Selecciona una carpeta para comenzar."
+
+msgid "Preparing the run…"
+msgstr "Preparando la ejecución…"
+
+msgid "Validating and scanning the folder…"
+msgstr "Validando y explorando la carpeta…"
+
+msgid "Processing {} images…"
+msgstr "Procesando {} imágenes…"
+
+msgid "Cancelling safely; the current image may take a moment…"
+msgstr "Cancelando de forma segura; la imagen en curso puede tardar unos instantes…"
+
+msgid "Choose a folder before starting."
+msgstr "Elige una carpeta antes de comenzar."
+
+msgid "The selected path is too long."
+msgstr "La ruta seleccionada es demasiado larga."
+
+msgid "JPEG quality must be between 1 and 100."
+msgstr "La calidad JPEG debe estar entre 1 y 100."
+
+msgid "Worker count must be between 1 and 32."
+msgstr "El número de trabajadores debe estar entre 1 y 32."
+
+msgid "The selected folder cannot be accessed."
+msgstr "No se puede acceder a la carpeta seleccionada."
+
+msgid "The selected path is not a folder."
+msgstr "La ruta seleccionada no es una carpeta."
+
+msgid "The folder location could not be validated."
+msgstr "No se pudo validar la ubicación de la carpeta."
+
+msgid "The scan could not be completed."
+msgstr "No se pudo completar el escaneo."
+
+msgid "The application database could not be opened."
+msgstr "No se pudo abrir la base de datos de la aplicación."
+
+msgid "The activity log could not be opened."
+msgstr "No se pudo abrir el registro de actividad."
+
+msgid "Background work could not be started."
+msgstr "No se pudo iniciar el trabajo en segundo plano."
+
+msgid "The internal state is unavailable."
+msgstr "El estado interno no está disponible."
+
+msgid "A compression run is already active."
+msgstr "Ya hay una compresión en curso."
+
+msgid "An internal process ended unexpectedly."
+msgstr "Un proceso interno terminó de forma inesperada."
+
+msgid "Process completed with incidents in {}."
+msgstr "Proceso finalizado con incidencias en {}."
+
+msgid "Process completed successfully in {}."
+msgstr "Proceso finalizado correctamente en {}."
+
+msgid "Process cancelled safely after {}."
+msgstr "Proceso cancelado de forma segura tras {}."
+
+msgid "Ready."
+msgstr "Listo."
+
+msgid "Reading local history…"
+msgstr "Leyendo el historial local…"
+
+msgid "Showing the first {} of {} groups. Local data: {}"
+msgstr "Se muestran los primeros {} de {} grupos. Datos locales: {}"
+
+msgid "The duplicate report could not be loaded."
+msgstr "No se pudo cargar el informe de duplicados."
+
+msgid "Local data: {}"
+msgstr "Datos locales: {}"
+
+msgid "Safe, parallel JPEG compression with duplicate history"
+msgstr "Compresión JPEG segura y paralela con historial de duplicados"
+
+msgid "About"
+msgstr "Acerca de"
+
+msgid "Source and settings"
+msgstr "Origen y ajustes"
+
+msgid "Folder containing .jpg or .jpeg files"
+msgstr "Carpeta que contiene archivos .jpg o .jpeg"
+
+msgid "Browse…"
+msgstr "Examinar…"
+
+msgid "Select the image folder"
+msgstr "Selecciona la carpeta de imágenes"
+
+msgid "JPEG quality"
+msgstr "Calidad JPEG"
+
+msgid "Workers"
+msgstr "Trabajadores"
+
+msgid "Skip images already recorded"
+msgstr "Omitir imágenes ya registradas"
+
+msgid "Convert the primary MPO image"
+msgstr "Convertir la imagen principal de MPO"
+
+msgid "Delete Thumbs.db files when finished"
+msgstr "Eliminar archivos Thumbs.db al terminar"
+
+msgid "Compress"
+msgstr "Comprimir"
+
+msgid "Cancelling…"
+msgstr "Cancelando…"
+
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgid "Found"
+msgstr "Encontradas"
+
+msgid "Optimized"
+msgstr "Optimizadas"
+
+msgid "Skipped"
+msgstr "Omitidas"
+
+msgid "Errors"
+msgstr "Errores"
+
+msgid "Space saved"
+msgstr "Espacio ahorrado"
+
+msgid "Thumbs.db deleted"
+msgstr "Thumbs.db borrados"
+
+msgid "Data protection"
+msgstr "Protección de datos"
+
+msgid "Each image is written to a temporary file in the same directory first. The original is replaced only after encoding and synchronization succeed."
+msgstr "Cada imagen se escribe primero en un archivo temporal del mismo directorio. El original solo se sustituye cuando la codificación y la sincronización terminan correctamente."
+
+msgid "Warning: some optimized files were not recorded in SQLite."
+msgstr "Atención: hay archivos optimizados sin registrar en SQLite."
+
+msgid "Do not shut down the computer while an operation is running."
+msgstr "No apagues el equipo mientras haya una operación en curso."
+
+msgid "Activity"
+msgstr "Actividad"
+
+msgid "Duplicates"
+msgstr "Duplicados"
+
+msgid "Recent activity will appear here."
+msgstr "Aquí aparecerá la actividad reciente."
+
+msgid "Records: {} · Unique: {} · Duplicates: {} · Groups: {}"
+msgstr "Registros: {} · Únicos: {} · Duplicados: {} · Grupos: {}"
+
+msgid "Loading…"
+msgstr "Cargando…"
+
+msgid "Refresh"
+msgstr "Actualizar"
+
+msgid "Visible duplicate space: {}"
+msgstr "Espacio duplicado visible: {}"
+
+msgid "No duplicate groups are recorded."
+msgstr "No hay grupos duplicados registrados."
+
+msgid "Local application written in Rust. Files are not sent to any network service."
+msgstr "Aplicación local escrita en Rust. Los archivos no se envían a ningún servicio de red."
+
+msgid "Data and log folder (next to the executable): {}"
+msgstr "Carpeta de datos y registro (junto al ejecutable): {}"
+
+msgid "Close"
+msgstr "Cerrar"
+
+msgid "{} copies"
+msgstr "{} copias"
+
+msgid "Duplicate space: {}"
+msgstr "Espacio duplicado: {}"
+
+msgid "MPO skipped because MPO processing is disabled"
+msgstr "MPO omitido porque su procesamiento está desactivado"
+
+msgid "File skipped because its content has an unsupported format"
+msgstr "Archivo omitido porque su contenido tiene un formato no admitido"
+
+msgid "File skipped because it exceeds a safety limit"
+msgstr "Archivo omitido porque supera un límite de seguridad"
+
+msgid "The registry could not be queried; the file was not changed"
+msgstr "No se pudo consultar el registro; el archivo no se modificó"
+
+msgid "The file could not be read; it was not changed"
+msgstr "No se pudo leer el archivo; no se modificó"
+
+msgid "File skipped because it is no longer inside the selected folder"
+msgstr "Archivo omitido porque ya no está dentro de la carpeta seleccionada"
+
+msgid "The image could not be decoded; it was not changed"
+msgstr "No se pudo decodificar la imagen; no se modificó"
+
+msgid "The temporary file could not be created; the original remains intact"
+msgstr "No se pudo crear el archivo temporal; el original sigue intacto"
+
+msgid "The temporary image could not be written; the original remains intact"
+msgstr "No se pudo escribir la imagen temporal; el original sigue intacto"
+
+msgid "The file could not be replaced; the original remains intact"
+msgstr "No se pudo reemplazar el archivo; el original sigue intacto"
+
+msgid "The file was replaced, but persistence could not be confirmed"
+msgstr "El archivo fue reemplazado, pero no se pudo confirmar su persistencia"
+
+msgid "Already optimized; {} copies have the same content"
+msgstr "Ya estaba optimizada; {} copias tienen el mismo contenido"
+
+msgid "Already optimized"
+msgstr "Ya estaba optimizada"
+
+msgid "Optimized, but the final hash could not be calculated"
+msgstr "Optimizada, pero no se pudo calcular el hash final"
+
+msgid "Optimized, but it could not be recorded in the database"
+msgstr "Optimizada, pero no se pudo registrar en la base de datos"
+
+msgid "Optimized at {}% ({} → {} KiB)"
+msgstr "Optimizada al {}% ({} → {} KiB)"
+
+msgid "A folder exceeding the maximum depth was skipped"
+msgstr "Se omitió una carpeta que supera la profundidad máxima"
+
+msgid "A subfolder could not be read"
+msgstr "No se pudo leer una subcarpeta"
+
+msgid "A directory entry could not be read"
+msgstr "No se pudo leer una entrada del directorio"
+
+msgid "An entry type could not be identified"
+msgstr "No se pudo identificar el tipo de una entrada"
+
+msgid "A symbolic link or junction was skipped"
+msgstr "Se omitió un enlace simbólico o unión"
+
+msgid "A worker could not open the registry"
+msgstr "Un trabajador no pudo abrir el registro"
+
+msgid "No worker could be started"
+msgstr "No se pudo iniciar ningún trabajador"
+
+msgid "The file was not processed"
+msgstr "El archivo no se procesó"
+
+msgid "Version {}"
+msgstr "Versión {}"
+
+msgid "Built with GPUI Kit"
+msgstr "Creado con GPUI Kit"
+
+msgid "Kept the original; re-encoding at {}% would not reduce it ({} → {} KiB)"
+msgstr "Se conservó el original; recodificarla al {}% no la reduciría ({} → {} KiB)"
+
+msgid "The file is read-only; it was not changed"
+msgstr "El archivo es de solo lectura; no se modificó"
+
+msgid "Scan"
+msgstr "Exploración"
+
+msgid "Process"
+msgstr "Proceso"
+
+msgid "Database"
+msgstr "Base de datos"
