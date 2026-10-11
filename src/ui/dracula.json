@@ -1,0 +1,103 @@
+{
+  "name": "Dracula",
+  "author": "Image Compressor, after the Dracula palette by Zeno Rocha",
+  "url": "https://draculatheme.com",
+  "$schema": "https://github.com/longbridge/gpui-kit/raw/refs/heads/main/.theme-schema.json",
+  "themes": [
+    {
+      "name": "Dracula",
+      "mode": "dark",
+      "colors": {
+        "background": "#282a36",
+        "foreground": "#f8f8f2",
+        "border": "#44475a",
+        "window.border": "#44475a",
+        "input.border": "#535670",
+        "ring": "#bd93f9",
+        "caret": "#f8f8f2",
+        "overlay": "#191a21cc",
+        "selection.background": "#bd93f955",
+
+        "accent.background": "#44475a",
+        "accent.foreground": "#f8f8f2",
+        "muted.background": "#21222c",
+        "muted.foreground": "#a3a9cc",
+
+        "primary.background": "#bd93f9",
+        "primary.hover.background": "#caa9fa",
+        "primary.active.background": "#a97ff6",
+        "primary.foreground": "#282a36",
+        "secondary.background": "#343746",
+        "secondary.hover.background": "#3d4053",
+        "secondary.active.background": "#44475a",
+        "secondary.foreground": "#f8f8f2",
+
+        "button.primary.background": "#bd93f9",
+        "button.primary.hover.background": "#caa9fa",
+        "button.primary.active.background": "#a97ff6",
+        "button.primary.foreground": "#282a36",
+
+        "success.background": "#50fa7b",
+        "success.hover.background": "#69fb8f",
+        "success.active.background": "#3ae868",
+        "success.foreground": "#282a36",
+        "warning.background": "#ffb86c",
+        "warning.hover.background": "#ffc685",
+        "warning.active.background": "#f5a652",
+        "warning.foreground": "#282a36",
+        "danger.background": "#ff5555",
+        "danger.hover.background": "#ff6e6e",
+        "danger.active.background": "#f03e3e",
+        "danger.foreground": "#f8f8f2",
+        "info.background": "#8be9fd",
+        "info.hover.background": "#a2eefd",
+        "info.active.background": "#6fdcf3",
+        "info.foreground": "#282a36",
+
+        "link": "#8be9fd",
+        "link.hover": "#a2eefd",
+        "link.active": "#6fdcf3",
+
+        "list.background": "#282a36",
+        "list.hover.background": "#343746",
+        "list.active.background": "#44475a",
+        "list.active.border": "#bd93f9",
+        "list.even.background": "#2c2e3b",
+        "list.head.background": "#21222c",
+
+        "popover.background": "#21222c",
+        "popover.foreground": "#f8f8f2",
+
+        "progress.bar.background": "#bd93f9",
+        "scrollbar.background": "#282a3600",
+        "scrollbar.thumb.background": "#44475a",
+        "scrollbar.thumb.hover.background": "#6272a4",
+        "skeleton.background": "#343746",
+        "slider.background": "#bd93f9",
+        "slider.thumb.background": "#f8f8f2",
+        "switch.background": "#44475a",
+        "switch.thumb.background": "#f8f8f2",
+
+        "tab.background": "#282a3600",
+        "tab.active.background": "#282a3600",
+        "tab.active.foreground": "#ff79c6",
+        "tab.foreground": "#a3a9cc",
+        "tab_bar.background": "#282a3600",
+        "tab_bar.segmented.background": "#21222c",
+
+        "title_bar.background": "#21222c",
+        "title_bar.border": "#191a21",
+        "status_bar.background": "#21222c",
+        "status_bar.border": "#191a21",
+        "chart.grid": "#44475a",
+
+        "base.red": "#ff5555",
+        "base.green": "#50fa7b",
+        "base.yellow": "#f1fa8c",
+        "base.blue": "#bd93f9",
+        "base.magenta": "#ff79c6",
+        "base.cyan": "#8be9fd"
+      }
+    }
+  ]
+}

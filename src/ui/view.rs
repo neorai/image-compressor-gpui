@@ -12,8 +12,8 @@ use gpui_kit::component::searchable_list::SearchableListItem;
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, IconName, IndexPath, Sizable as _, Theme, WindowExt as _,
-    h_flex, v_flex,
+    ActiveTheme as _, Disableable as _, IconName, IndexPath, Sizable as _, WindowExt as _, h_flex,
+    v_flex,
 };
 use gpui_kit::{
     AnyElement, App, AppContext as _, ClickEvent, Context, Div, Entity, FontWeight, Hsla,
@@ -172,9 +172,6 @@ impl CompressorView {
                 if matches!(event, InputEvent::Change) {
                     cx.notify();
                 }
-            }),
-            window.observe_window_appearance(|window, cx| {
-                Theme::sync_system_appearance(Some(window), cx);
             }),
         ];
 

@@ -43,7 +43,7 @@ string has no translation or the catalog keeps an unused entry.
 - Optional `Thumbs.db` cleanup after confirming every candidate remains inside the selected root.
 - A 5 MiB activity log that rotates while the application runs, without full root paths in
   per-image messages.
-- Light and dark themes that follow the operating system.
+- A dark interface with the [Dracula](https://draculatheme.com) color palette (`src/ui/dracula.json`).
 
 ## Build and run
 
