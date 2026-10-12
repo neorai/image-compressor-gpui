@@ -31,3 +31,6 @@ unsafe_code = "deny"
 correctness = "deny"
 perf = "warn"
 suspicious = "deny"
+
+[build-dependencies]
+embed-resource = "3.0.12"

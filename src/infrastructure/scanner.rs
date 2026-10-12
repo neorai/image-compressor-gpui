@@ -12,9 +12,16 @@ const MAX_SCANNED_ENTRIES: usize = 1_000_000;
 
 #[derive(Debug, Default)]
 pub struct ScanResult {
-    pub images: Vec<PathBuf>,
+    pub images: Vec<ScannedImage>,
     pub thumbs_databases: Vec<PathBuf>,
     pub warnings: Vec<ScanWarning>,
+}
+
+/// A JPEG found by the scan, with its size from the directory listing.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ScannedImage {
+    pub path: PathBuf,
+    pub bytes: u64,
 }
 
 #[derive(Debug)]
@@ -99,7 +106,10 @@ pub fn scan_directory(root: &Path, cancelled: &AtomicBool) -> Result<ScanResult,
                     if result.images.len() >= MAX_FILES_PER_RUN {
                         return Err(ScanError::TooManyImages);
                     }
-                    result.images.push(path);
+                    // On Windows the size comes with the listing, so this
+                    // does not open the file.
+                    let bytes = entry.metadata().map_or(0, |metadata| metadata.len());
+                    result.images.push(ScannedImage { path, bytes });
                 } else if is_thumbs_database(&path) {
                     result.thumbs_databases.push(path);
                 }
@@ -212,12 +222,16 @@ mod tests {
         let nested = directory.path().join("nested");
         fs::create_dir(&nested)?;
         fs::write(nested.join("one.JPG"), b"jpeg")?;
+        fs::write(directory.path().join("zero.jpeg"), b"")?;
         fs::write(nested.join("two.png"), b"png")?;
         fs::write(nested.join("Thumbs.db"), b"cache")?;
 
         let result = scan_directory(directory.path(), &AtomicBool::new(false))?;
 
-        assert_eq!(result.images.len(), 1);
+        assert_eq!(result.images.len(), 2);
+        assert_eq!(result.images[0].path, nested.join("one.JPG"));
+        assert_eq!(result.images[0].bytes, 4);
+        assert_eq!(result.images[1].bytes, 0);
         assert_eq!(result.thumbs_databases.len(), 1);
         Ok(())
     }

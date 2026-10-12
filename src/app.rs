@@ -17,7 +17,9 @@ use crate::infrastructure::database::{
 use crate::infrastructure::image_processor::{ProcessedFile, process_image};
 use crate::infrastructure::logger::FileActivityLog;
 use crate::infrastructure::paths::AppPaths;
-use crate::infrastructure::scanner::{ScanError, cleanup_thumbs_databases, scan_directory};
+use crate::infrastructure::scanner::{
+    ScanError, ScanResult, ScanWarning, cleanup_thumbs_databases, scan_directory,
+};
 use crate::ports::{ActivityLog, LogLevel};
 
 const CHANNEL_ITEMS_PER_WORKER: usize = 2;
@@ -40,11 +42,28 @@ pub enum AppEvent {
         current_file: String,
     },
     Activity(Vec<ActivityEntry>),
+    /// The images a scan found, sent by both analysis and compression runs.
+    Analyzed(AnalysisReport),
     Finished {
         state: RunState,
         stats: RunStats,
         elapsed: Duration,
     },
+}
+
+/// The JPEG files found in a folder, before anything is changed.
+#[derive(Debug, Clone, Default)]
+pub struct AnalysisReport {
+    pub images: Vec<DetectedImage>,
+    pub total_bytes: u64,
+    pub thumbs_databases: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DetectedImage {
+    /// Path relative to the analyzed folder.
+    pub path: String,
+    pub bytes: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -80,15 +99,8 @@ impl RunRequest {
         process_mpo: bool,
         delete_thumbs: bool,
     ) -> Result<Self, ValidationError> {
-        let path = path.trim();
-        if path.is_empty() {
-            return Err(ValidationError::EmptyPath);
-        }
-        if path.chars().count() > 32_767 {
-            return Err(ValidationError::PathTooLong);
-        }
         Ok(Self {
-            root: PathBuf::from(path),
+            root: validated_root(path)?,
             policy: ProcessingPolicy {
                 quality: JpegQuality::new(quality)?,
                 workers: WorkerCount::new(workers)?,
@@ -98,6 +110,31 @@ impl RunRequest {
             },
         })
     }
+}
+
+/// A read-only scan that lists the images a compression run would process.
+#[derive(Debug, Clone)]
+pub struct AnalysisRequest {
+    root: PathBuf,
+}
+
+impl AnalysisRequest {
+    pub fn new(path: &str) -> Result<Self, ValidationError> {
+        Ok(Self {
+            root: validated_root(path)?,
+        })
+    }
+}
+
+fn validated_root(path: &str) -> Result<PathBuf, ValidationError> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err(ValidationError::EmptyPath);
+    }
+    if path.chars().count() > 32_767 {
+        return Err(ValidationError::PathTooLong);
+    }
+    Ok(PathBuf::from(path))
 }
 
 pub struct AppController {
@@ -126,6 +163,32 @@ impl AppController {
     }
 
     pub fn start(&self, request: RunRequest, sink: Arc<dyn EventSink>) -> Result<(), AppError> {
+        let paths = self.paths.clone();
+        let logger = Arc::clone(&self.logger);
+        self.spawn_job("compression-coordinator", sink, move |cancelled, sink| {
+            run_compression(request, paths, logger, cancelled, sink)
+        })
+    }
+
+    /// Scans a folder without changing anything. It shares the job slot with
+    /// compression, so the two never run at the same time.
+    pub fn analyze(
+        &self,
+        request: AnalysisRequest,
+        sink: Arc<dyn EventSink>,
+    ) -> Result<(), AppError> {
+        let logger = Arc::clone(&self.logger);
+        self.spawn_job("folder-analysis", sink, move |cancelled, sink| {
+            run_analysis(request, &logger, &cancelled, sink)
+        })
+    }
+
+    fn spawn_job(
+        &self,
+        name: &str,
+        sink: Arc<dyn EventSink>,
+        job: impl FnOnce(Arc<AtomicBool>, &Arc<dyn EventSink>) -> AppEvent + Send + 'static,
+    ) -> Result<(), AppError> {
         let mut current = self
             .current_job
             .lock()
@@ -145,12 +208,10 @@ impl AppController {
         let completed = Arc::new(AtomicBool::new(false));
         let worker_cancelled = Arc::clone(&cancelled);
         let worker_completed = Arc::clone(&completed);
-        let paths = self.paths.clone();
-        let logger = Arc::clone(&self.logger);
         let handle = thread::Builder::new()
-            .name("compression-coordinator".to_owned())
+            .name(name.to_owned())
             .spawn(move || {
-                let finished = run_compression(request, paths, logger, worker_cancelled, &sink);
+                let finished = job(worker_cancelled, &sink);
                 worker_completed.store(true, Ordering::Release);
                 sink.send(finished);
             })
@@ -222,39 +283,12 @@ fn run_compression(
     });
     logger.write(LogLevel::Info, "run", "compression run started");
 
-    let canonical_root = match validate_root(&request.root) {
-        Ok(root) => root,
-        Err(error) => {
-            return fail_run(
-                sink,
-                &logger,
-                error.status_code(),
-                &error.to_string(),
-                started,
-            );
-        }
+    let (canonical_root, scan) = match scan_root(&request.root, &cancelled, &logger, sink, started)
+    {
+        Ok(scanned) => scanned,
+        Err(finished) => return finished,
     };
-    let scan = match scan_directory(&canonical_root, &cancelled) {
-        Ok(scan) => scan,
-        Err(ScanError::Cancelled) => return finish_cancelled(RunStats::default(), started),
-        Err(error) => {
-            return fail_run(sink, &logger, "scan-failed", &error.to_string(), started);
-        }
-    };
-
-    let mut initial_activity = Vec::new();
-    for warning in scan.warnings {
-        logger.write(LogLevel::Warning, "scan", &warning.diagnostic);
-        initial_activity.push(ActivityEntry {
-            level: LogLevel::Warning,
-            source: ActivitySource::Scan,
-            message_code: warning.code,
-            message_args: [0; 3],
-        });
-    }
-    if !initial_activity.is_empty() {
-        sink.send(AppEvent::Activity(initial_activity));
-    }
+    sink.send(AppEvent::Analyzed(analysis_report(&canonical_root, &scan)));
 
     let mut stats = RunStats {
         total_found: scan.images.len(),
@@ -279,7 +313,7 @@ fn run_compression(
             &canonical_root,
             &paths.database,
             request.policy,
-            scan.images,
+            scan.images.into_iter().map(|image| image.path).collect(),
             &cancelled,
             &logger,
             sink,
@@ -327,6 +361,123 @@ fn run_compression(
         state: RunState::Completed,
         stats,
         elapsed: started.elapsed(),
+    }
+}
+
+/// Lists the images in a folder without changing anything.
+fn run_analysis(
+    request: AnalysisRequest,
+    logger: &Arc<FileActivityLog>,
+    cancelled: &AtomicBool,
+    sink: &Arc<dyn EventSink>,
+) -> AppEvent {
+    let started = Instant::now();
+    sink.send(AppEvent::State {
+        state: RunState::Scanning,
+        status_code: "analyzing",
+        status_value: 0,
+    });
+    logger.write(LogLevel::Info, "analysis", "folder analysis started");
+
+    let (canonical_root, scan) = match scan_root(&request.root, cancelled, logger, sink, started) {
+        Ok(scanned) => scanned,
+        Err(finished) => return finished,
+    };
+    let report = analysis_report(&canonical_root, &scan);
+    logger.write(
+        LogLevel::Info,
+        "analysis-summary",
+        &format!(
+            "found={}, bytes={}, thumbs={}",
+            report.images.len(),
+            report.total_bytes,
+            report.thumbs_databases
+        ),
+    );
+    let stats = RunStats {
+        total_found: report.images.len(),
+        ..RunStats::default()
+    };
+    sink.send(AppEvent::Analyzed(report));
+    AppEvent::Finished {
+        state: RunState::Completed,
+        stats,
+        elapsed: started.elapsed(),
+    }
+}
+
+/// Validates and scans the selected folder and reports scan warnings. On
+/// failure or cancellation it returns the run's final event instead.
+fn scan_root(
+    root: &Path,
+    cancelled: &AtomicBool,
+    logger: &Arc<FileActivityLog>,
+    sink: &Arc<dyn EventSink>,
+    started: Instant,
+) -> Result<(PathBuf, ScanResult), AppEvent> {
+    let canonical_root = validate_root(root).map_err(|error| {
+        fail_run(
+            sink,
+            logger,
+            error.status_code(),
+            &error.to_string(),
+            started,
+        )
+    })?;
+    match scan_directory(&canonical_root, cancelled) {
+        Ok(mut scan) => {
+            report_scan_warnings(std::mem::take(&mut scan.warnings), logger, sink);
+            Ok((canonical_root, scan))
+        }
+        Err(ScanError::Cancelled) => Err(finish_cancelled(RunStats::default(), started)),
+        Err(error) => Err(fail_run(
+            sink,
+            logger,
+            "scan-failed",
+            &error.to_string(),
+            started,
+        )),
+    }
+}
+
+fn report_scan_warnings(
+    warnings: Vec<ScanWarning>,
+    logger: &Arc<FileActivityLog>,
+    sink: &Arc<dyn EventSink>,
+) {
+    if warnings.is_empty() {
+        return;
+    }
+    let entries = warnings
+        .into_iter()
+        .map(|warning| {
+            logger.write(LogLevel::Warning, "scan", &warning.diagnostic);
+            ActivityEntry {
+                level: LogLevel::Warning,
+                source: ActivitySource::Scan,
+                message_code: warning.code,
+                message_args: [0; 3],
+            }
+        })
+        .collect();
+    sink.send(AppEvent::Activity(entries));
+}
+
+fn analysis_report(canonical_root: &Path, scan: &ScanResult) -> AnalysisReport {
+    let images: Vec<DetectedImage> = scan
+        .images
+        .iter()
+        .map(|image| DetectedImage {
+            path: relative_label(canonical_root, &image.path),
+            bytes: image.bytes,
+        })
+        .collect();
+    AnalysisReport {
+        total_bytes: images
+            .iter()
+            .fold(0, |total, image| total.saturating_add(image.bytes)),
+        thumbs_databases: scan.thumbs_databases.len(),
+        images,
     }
 }
 
@@ -673,7 +824,86 @@ impl std::error::Error for AppError {}
 
 #[cfg(test)]
 mod tests {
-    use super::RunRequest;
+    use std::fs;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::{Arc, Mutex};
+
+    use tempfile::tempdir;
+
+    use super::{AnalysisRequest, AppEvent, EventSink, RunRequest, run_analysis};
+    use crate::domain::RunState;
+    use crate::infrastructure::logger::FileActivityLog;
+
+    #[derive(Default)]
+    struct RecordingSink(Mutex<Vec<AppEvent>>);
+
+    impl EventSink for RecordingSink {
+        fn send(&self, event: AppEvent) {
+            if let Ok(mut events) = self.0.lock() {
+                events.push(event);
+            }
+        }
+    }
+
+    #[test]
+    fn analysis_lists_images_without_changing_them() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempdir()?;
+        let photos = directory.path().join("photos");
+        fs::create_dir(&photos)?;
+        fs::write(photos.join("b.jpg"), b"12345")?;
+        fs::write(photos.join("a.JPEG"), b"123")?;
+        fs::write(photos.join("Thumbs.db"), b"cache")?;
+        fs::write(photos.join("notes.txt"), b"text")?;
+        let log_directory = tempdir()?;
+        let logger = Arc::new(FileActivityLog::open(&log_directory.path().join("a.log"))?);
+        let recording = Arc::new(RecordingSink::default());
+        let sink: Arc<dyn EventSink> = recording.clone();
+
+        let finished = run_analysis(
+            AnalysisRequest::new(&directory.path().display().to_string())?,
+            &logger,
+            &AtomicBool::new(false),
+            &sink,
+        );
+
+        let AppEvent::Finished { state, stats, .. } = finished else {
+            return Err("the analysis must end with a finished event".into());
+        };
+        assert_eq!(state, RunState::Completed);
+        assert_eq!(stats.total_found, 2);
+        let events = recording.0.lock().map_err(|_| "poisoned event list")?;
+        let report = events
+            .iter()
+            .find_map(|event| match event {
+                AppEvent::Analyzed(report) => Some(report),
+                _ => None,
+            })
+            .ok_or("no analysis report was sent")?;
+        let separator = std::path::MAIN_SEPARATOR;
+        let listed: Vec<_> = report
+            .images
+            .iter()
+            .map(|image| (image.path.clone(), image.bytes))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                (format!("photos{separator}a.JPEG"), 3),
+                (format!("photos{separator}b.jpg"), 5),
+            ]
+        );
+        assert_eq!(report.total_bytes, 8);
+        assert_eq!(report.thumbs_databases, 1);
+        assert_eq!(fs::read(photos.join("b.jpg"))?, b"12345");
+        assert!(photos.join("Thumbs.db").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn analysis_requires_a_folder_path() {
+        assert!(AnalysisRequest::new("  ").is_err());
+        assert!(AnalysisRequest::new("images").is_ok());
+    }
 
     #[test]
     fn request_validates_empty_paths_and_numeric_bounds() {

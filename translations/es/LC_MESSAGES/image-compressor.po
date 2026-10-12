@@ -306,3 +306,48 @@ msgstr "Quedan aprox. {}"
 
 msgid "Estimating the time remaining…"
 msgstr "Calculando el tiempo restante…"
+
+msgid "Analyzing the folder; nothing will be changed…"
+msgstr "Analizando la carpeta; no se modificará nada…"
+
+msgid "Analysis complete: {} images found in {}. No file was changed."
+msgstr "Análisis completado: {} imágenes encontradas en {}. No se modificó ningún archivo."
+
+msgid "Analyze folder"
+msgstr "Analizar carpeta"
+
+msgid "List the images in the folder without changing them"
+msgstr "Lista las imágenes de la carpeta sin modificarlas"
+
+msgid "{} images detected ({})"
+msgstr "{} imágenes detectadas ({})"
+
+msgid "Detected"
+msgstr "Detectadas"
+
+msgid "Detected ({})"
+msgstr "Detectadas ({})"
+
+msgid "Errors ({})"
+msgstr "Errores ({})"
+
+msgid "Press Analyze folder to list the images it contains."
+msgstr "Pulsa Analizar carpeta para ver las imágenes que contiene."
+
+msgid "No .jpg or .jpeg files were found in the folder."
+msgstr "No se encontraron archivos .jpg ni .jpeg en la carpeta."
+
+msgid "Images: {} · Total size: {} · Thumbs.db files: {}"
+msgstr "Imágenes: {} · Tamaño total: {} · Archivos Thumbs.db: {}"
+
+msgid "No errors or warnings in the last run."
+msgstr "Sin errores ni avisos en la última ejecución."
+
+msgid "Errors and warnings will appear here."
+msgstr "Los errores y avisos aparecerán aquí."
+
+msgid "Created by {}"
+msgstr "Creado por {}"
+
+msgid "No errors or warnings so far."
+msgstr "Sin errores ni avisos por ahora."

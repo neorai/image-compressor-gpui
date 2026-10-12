@@ -9,6 +9,12 @@ pub fn status(language: Language, code: &str, value: i32, detail: &str) -> Strin
         "idle" => tr(language, "Select a folder to begin."),
         "preparing" => tr(language, "Preparing the run…"),
         "scanning" => tr(language, "Validating and scanning the folder…"),
+        "analyzing" => tr(language, "Analyzing the folder; nothing will be changed…"),
+        "analysis-complete" => trf(
+            language,
+            "Analysis complete: {} images found in {}. No file was changed.",
+            &[&value, &detail],
+        ),
         "processing" => trf(language, "Processing {} images…", &[&value]),
         "cancelling" => tr(
             language,

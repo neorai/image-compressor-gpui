@@ -10,6 +10,7 @@
 6. Offer `Thumbs.db` cleanup and a duplicate report.
 7. Keep English as the source/default language and offer runtime Spanish localization.
 8. Store all application-owned files in `data/` next to the executable.
+9. Offer a read-only folder analysis that lists the images a run would process, with their sizes.
 
 ## Boundaries and assumptions
 
@@ -30,6 +31,11 @@ GPUI Kit view (CompressorView entity)
   -> batched events on a per-run channel
   -> view task that drains the channel every 50 ms on the UI thread
 ```
+
+A folder analysis uses the same job slot, thread, and cancellation as a compression run, but stops
+after the scan: it never opens, decodes, or writes an image. Both kinds of job send the scan result
+to the view, which shows it in a virtualized list, so a folder at the 250,000-image limit stays
+responsive. Errors and warnings are also kept in a separate list of up to 5,000 rows.
 
 Each run gets its own event channel, so a late event from a finished run can never update a newer
 one. The coordinator marks a run as completed before it sends the final event, so a new run
@@ -79,6 +85,7 @@ unsafe code, which this implementation deliberately avoids without platform-spec
 - The window can choose a folder and settings, switch between English and Spanish, start, show
   progress, and cancel; closing it during a run leaves no temporary file.
 - All statistic cards share one two-column grid and remain aligned across rows.
+- Analyzing a folder lists its JPEG files and sizes and leaves every file unchanged.
 - A valid JPEG is replaced, recorded, and counted; a second run is skipped.
 - A rotated camera JPEG keeps its visible orientation after compression.
 - A JPEG that would grow is left byte-for-byte unchanged and skipped on the next run.

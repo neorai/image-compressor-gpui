@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded};
+use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState, NumberInput};
@@ -16,12 +17,16 @@ use gpui_kit::component::{
     v_flex,
 };
 use gpui_kit::{
-    AnyElement, App, AppContext as _, ClickEvent, Context, Div, Entity, FontWeight, Hsla,
-    InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
-    Subscription, Task, Window, div, px, rems,
+    AnyElement, App, AppContext as _, ClickEvent, Context, Div, Entity, FontWeight, Hsla, Image,
+    ImageFormat, InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
+    Styled as _, Subscription, Task, UniformListScrollHandle, Window, div, img, px, rems,
+    uniform_list,
 };
 
-use crate::app::{ActivityEntry, AppController, AppError, AppEvent, EventSink, RunRequest};
+use crate::app::{
+    ActivityEntry, AnalysisReport, AnalysisRequest, AppController, AppError, AppEvent, EventSink,
+    RunRequest,
+};
 use crate::domain::{RunState, RunStats, ValidationError};
 use crate::infrastructure::database::DuplicateReport;
 use crate::ports::LogLevel;
@@ -39,9 +44,19 @@ const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// while a single slow image produces no events.
 const CLOCK_TICK: Duration = Duration::from_secs(1);
 
+/// The errors tab keeps the most recent errors and warnings of a run.
+const MAX_ISSUE_ROWS: usize = 5_000;
+
 const DEFAULT_QUALITY: i32 = 50;
 const TAB_ACTIVITY: usize = 0;
-const TAB_DUPLICATES: usize = 1;
+const TAB_DETECTED: usize = 1;
+const TAB_ERRORS: usize = 2;
+const TAB_DUPLICATES: usize = 3;
+
+const AUTHOR_NAME: &str = "Robert";
+const AUTHOR_URL: &str = "https://github.com/neorai";
+const AUTHOR_URL_LABEL: &str = "github.com/neorai";
+const APP_ICON_PNG: &[u8] = include_bytes!("../../assets/icon.png");
 
 /// Delivers coordinator events to the view through a channel the view drains.
 struct ChannelSink(Sender<AppEvent>);
@@ -71,9 +86,17 @@ impl SearchableListItem for LanguageChoice {
 
 /// One activity row with a domain identity, so rows keep their element ids
 /// when older rows are dropped from the bounded list.
+#[derive(Clone)]
 struct ActivityRow {
     id: u64,
     entry: ActivityEntry,
+}
+
+/// What the current or last background job does.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum JobKind {
+    Analysis,
+    Compression,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -124,8 +147,13 @@ pub struct CompressorView {
     stats: RunStats,
     current_file: String,
     clock: Option<RunClock>,
+    job_kind: JobKind,
     activity: VecDeque<ActivityRow>,
+    issues: VecDeque<ActivityRow>,
     next_activity_id: u64,
+    detected: Option<AnalysisReport>,
+    detected_scroll: UniformListScrollHandle,
+    app_icon: Arc<Image>,
 
     active_tab: usize,
     report: DuplicateReport,
@@ -200,8 +228,13 @@ impl CompressorView {
             stats: RunStats::default(),
             current_file: String::new(),
             clock: None,
+            job_kind: JobKind::Compression,
             activity: VecDeque::new(),
+            issues: VecDeque::new(),
             next_activity_id: 0,
+            detected: None,
+            detected_scroll: UniformListScrollHandle::new(),
+            app_icon: Arc::new(Image::from_bytes(ImageFormat::Png, APP_ICON_PNG.to_vec())),
             active_tab: TAB_ACTIVITY,
             report: DuplicateReport::default(),
             report_status: ReportStatus::Loading,
@@ -286,10 +319,44 @@ impl CompressorView {
         };
 
         let (sender, receiver) = unbounded();
-        if let Err(error) = self
+        let started = self
             .controller
-            .start(request, Arc::new(ChannelSink(sender)))
-        {
+            .start(request, Arc::new(ChannelSink(sender)));
+        self.begin_job(JobKind::Compression, started, receiver, cx);
+    }
+
+    /// Lists the images in the folder without changing anything.
+    fn analyze(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if self.running() {
+            return;
+        }
+        let path = self.path_input.read(cx).value();
+        let request = match AnalysisRequest::new(&path) {
+            Ok(request) => request,
+            Err(error) => {
+                self.set_run_state(RunState::Failed);
+                self.status_code = validation_status_code(error);
+                cx.notify();
+                return;
+            }
+        };
+
+        let (sender, receiver) = unbounded();
+        let started = self
+            .controller
+            .analyze(request, Arc::new(ChannelSink(sender)));
+        self.begin_job(JobKind::Analysis, started, receiver, cx);
+    }
+
+    /// Resets the run display for a job the controller accepted.
+    fn begin_job(
+        &mut self,
+        kind: JobKind,
+        started: Result<(), AppError>,
+        receiver: Receiver<AppEvent>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Err(error) = started {
             // A rejected start leaves any previous results on screen.
             eprintln!("the run could not be started: {error}");
             self.status_kind = StatusKind::Error;
@@ -298,6 +365,7 @@ impl CompressorView {
             return;
         }
 
+        self.job_kind = kind;
         self.set_run_state(RunState::Scanning);
         self.status_code = "preparing";
         self.status_value = 0;
@@ -306,6 +374,8 @@ impl CompressorView {
         self.current_file.clear();
         self.clock = Some(RunClock::start(Instant::now()));
         self.activity.clear();
+        self.issues.clear();
+        self.detected = None;
         self.watch_job(receiver, cx);
         cx.notify();
     }
@@ -394,6 +464,13 @@ impl CompressorView {
                 self.current_file = current_file;
             }
             AppEvent::Activity(entries) => self.push_activity(entries),
+            AppEvent::Analyzed(report) => {
+                self.detected_scroll = UniformListScrollHandle::new();
+                self.detected = Some(report);
+                if self.job_kind == JobKind::Analysis {
+                    self.active_tab = TAB_DETECTED;
+                }
+            }
             AppEvent::Finished {
                 state,
                 stats,
@@ -404,6 +481,14 @@ impl CompressorView {
                 self.current_file.clear();
                 self.stop_clock();
                 match state {
+                    RunState::Completed if self.job_kind == JobKind::Analysis => {
+                        if !self.issues.is_empty() {
+                            self.status_kind = StatusKind::Warning;
+                        }
+                        self.status_code = "analysis-complete";
+                        self.status_value = i32::try_from(stats.total_found).unwrap_or(i32::MAX);
+                        self.status_detail = format::duration(elapsed);
+                    }
                     RunState::Completed => {
                         if stats.has_incidents() {
                             self.status_kind = StatusKind::Warning;
@@ -420,7 +505,9 @@ impl CompressorView {
                     // A failure keeps the status code its State event set.
                     _ => {}
                 }
-                self.refresh_report(cx);
+                if self.job_kind == JobKind::Compression {
+                    self.refresh_report(cx);
+                }
             }
         }
     }
@@ -431,16 +518,25 @@ impl CompressorView {
         }
     }
 
+    /// Adds rows newest first; errors and warnings are also kept in the
+    /// errors tab, which retains far more rows than the activity list.
     fn push_activity(&mut self, entries: Vec<ActivityEntry>) {
         for entry in entries {
+            let row = ActivityRow {
+                id: self.next_activity_id,
+                entry,
+            };
+            self.next_activity_id = self.next_activity_id.wrapping_add(1);
+            if row.entry.level != LogLevel::Info {
+                if self.issues.len() >= MAX_ISSUE_ROWS {
+                    self.issues.pop_back();
+                }
+                self.issues.push_front(row.clone());
+            }
             if self.activity.len() >= MAX_ACTIVITY_ROWS {
                 self.activity.pop_back();
             }
-            self.activity.push_front(ActivityRow {
-                id: self.next_activity_id,
-                entry,
-            });
-            self.next_activity_id = self.next_activity_id.wrapping_add(1);
+            self.activity.push_front(row);
         }
     }
 
@@ -492,6 +588,7 @@ impl CompressorView {
     fn open_about(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         let language = self.language;
         let data_directory = self.data_directory.clone();
+        let icon = Arc::clone(&self.app_icon);
         window.open_dialog(cx, move |dialog, _, cx| {
             let muted = cx.theme().muted_foreground;
             dialog
@@ -501,10 +598,37 @@ impl CompressorView {
                     v_flex()
                         .gap_3()
                         .child(
-                            div()
-                                .text_sm()
-                                .text_color(muted)
-                                .child(trf(language, "Version {}", &[&env!("CARGO_PKG_VERSION")])),
+                            h_flex()
+                                .gap_3()
+                                .child(img(Arc::clone(&icon)).size_12().flex_none())
+                                .child(
+                                    v_flex()
+                                        .min_w_0()
+                                        .child(div().text_sm().text_color(muted).child(trf(
+                                            language,
+                                            "Version {}",
+                                            &[&env!("CARGO_PKG_VERSION")],
+                                        )))
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .child(trf(
+                                                    language,
+                                                    "Created by {}",
+                                                    &[&AUTHOR_NAME],
+                                                )),
+                                        )
+                                        .child(
+                                            Button::new("author-github")
+                                                .link()
+                                                .small()
+                                                .icon(Lucide::Github)
+                                                .label(AUTHOR_URL_LABEL)
+                                                .tooltip(AUTHOR_URL)
+                                                .on_click(|_, _, cx| cx.open_url(AUTHOR_URL)),
+                                        ),
+                                ),
                         )
                         .child(div().text_sm().child(tr(
                             language,
@@ -545,6 +669,7 @@ impl CompressorView {
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .gap_3()
+            .child(img(Arc::clone(&self.app_icon)).size_12().flex_none())
             .child(
                 v_flex()
                     .flex_1()
@@ -691,21 +816,35 @@ impl CompressorView {
             &self.status_detail,
         );
 
-        let action = if running {
-            Button::new("cancel")
-                .label(if cancelling {
-                    self.tr("Cancelling…")
-                } else {
-                    self.tr("Cancel")
-                })
-                .disabled(cancelling)
-                .on_click(cx.listener(Self::cancel))
+        let actions = if running {
+            h_flex().child(
+                Button::new("cancel")
+                    .label(if cancelling {
+                        self.tr("Cancelling…")
+                    } else {
+                        self.tr("Cancel")
+                    })
+                    .disabled(cancelling)
+                    .on_click(cx.listener(Self::cancel)),
+            )
         } else {
-            Button::new("compress")
-                .primary()
-                .label(self.tr("Compress"))
-                .disabled(!has_path)
-                .on_click(cx.listener(Self::start))
+            h_flex()
+                .gap_2()
+                .child(
+                    Button::new("analyze")
+                        .icon(IconName::Search)
+                        .label(self.tr("Analyze folder"))
+                        .tooltip(self.tr("List the images in the folder without changing them"))
+                        .disabled(!has_path)
+                        .on_click(cx.listener(Self::analyze)),
+                )
+                .child(
+                    Button::new("compress")
+                        .primary()
+                        .label(self.tr("Compress"))
+                        .disabled(!has_path)
+                        .on_click(cx.listener(Self::start)),
+                )
         };
 
         let border = if self.status_kind == StatusKind::Idle {
@@ -730,7 +869,7 @@ impl CompressorView {
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(message),
                     )
-                    .child(action),
+                    .child(actions),
             )
             .child(
                 Progress::new("progress")
@@ -755,14 +894,21 @@ impl CompressorView {
     fn render_counters(&self, cx: &App) -> impl IntoElement {
         let stats = self.stats;
         let now = Instant::now();
-        let count = (self.run_state != RunState::Idle && stats.total_found > 0).then(|| {
-            let percent = stats.completed.saturating_mul(100) / stats.total_found;
-            trf(
+        let count = match (&self.detected, self.job_kind) {
+            (Some(report), JobKind::Analysis) if !self.running() => Some(trf(
                 self.language,
-                "{} of {} images ({}%)",
-                &[&stats.completed, &stats.total_found, &percent],
-            )
-        });
+                "{} images detected ({})",
+                &[&report.images.len(), &format::bytes(report.total_bytes)],
+            )),
+            _ => (self.run_state != RunState::Idle && stats.total_found > 0).then(|| {
+                let percent = stats.completed.saturating_mul(100) / stats.total_found;
+                trf(
+                    self.language,
+                    "{} of {} images ({}%)",
+                    &[&stats.completed, &stats.total_found, &percent],
+                )
+            }),
+        };
         let timing = self.clock.as_ref().map(|clock| {
             let elapsed = trf(
                 self.language,
@@ -902,20 +1048,138 @@ impl CompressorView {
     }
 
     fn render_activity(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme();
         if self.activity.is_empty() {
             return empty_state(
                 self.tr("Recent activity will appear here."),
-                theme.muted_foreground,
+                cx.theme().muted_foreground,
             );
         }
+        self.render_rows("activity-list", &self.activity, cx)
+    }
+
+    fn render_errors(&self, cx: &mut Context<Self>) -> AnyElement {
+        if self.issues.is_empty() {
+            let (text, color) = if self.running() {
+                (self.tr("No errors or warnings so far."), cx.theme().success)
+            } else if self.clock.is_some() {
+                (
+                    self.tr("No errors or warnings in the last run."),
+                    cx.theme().success,
+                )
+            } else {
+                (
+                    self.tr("Errors and warnings will appear here."),
+                    cx.theme().muted_foreground,
+                )
+            };
+            return empty_state(text, color);
+        }
+        self.render_rows("error-list", &self.issues, cx)
+    }
+
+    /// The images found by the last analysis or compression scan. The list is
+    /// virtualized, so only the visible rows are laid out.
+    fn render_detected(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme();
+        let Some(report) = &self.detected else {
+            return empty_state(
+                self.tr("Press Analyze folder to list the images it contains."),
+                theme.muted_foreground,
+            );
+        };
+        if report.images.is_empty() {
+            return empty_state(
+                self.tr("No .jpg or .jpeg files were found in the folder."),
+                theme.warning,
+            );
+        }
+
+        let header = div()
+            .px_2()
+            .pt_2()
+            .text_sm()
+            .text_color(theme.muted_foreground)
+            .child(trf(
+                self.language,
+                "Images: {} · Total size: {} · Thumbs.db files: {}",
+                &[
+                    &report.images.len(),
+                    &format::bytes(report.total_bytes),
+                    &report.thumbs_databases,
+                ],
+            ));
+        let list = uniform_list(
+            "detected-list",
+            report.images.len(),
+            cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
+                let theme = cx.theme();
+                let Some(report) = &this.detected else {
+                    return Vec::new();
+                };
+                let images = report.images.get(range).unwrap_or_default();
+                images
+                    .iter()
+                    .map(|image| {
+                        h_flex()
+                            .w_full()
+                            .h_7()
+                            .gap_3()
+                            .px_2()
+                            .text_sm()
+                            .border_b_1()
+                            .border_color(theme.border)
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis_start()
+                                    .child(image.path.clone()),
+                            )
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child(format::bytes(image.bytes)),
+                            )
+                    })
+                    .collect()
+            }),
+        )
+        .track_scroll(&self.detected_scroll)
+        .size_full();
+
         v_flex()
-            .id("activity-list")
+            .size_full()
+            .child(header)
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .p_2()
+                    .child(list)
+                    .vertical_scrollbar(&self.detected_scroll),
+            )
+            .into_any_element()
+    }
+
+    fn render_rows(
+        &self,
+        id: &'static str,
+        rows: &VecDeque<ActivityRow>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        v_flex()
+            .id(id)
             .size_full()
             .gap_1()
             .p_2()
             .overflow_y_scrollbar()
-            .children(self.activity.iter().map(|row| {
+            .children(rows.iter().map(|row| {
                 let color = match row.entry.level {
                     LogLevel::Info => theme.success,
                     LogLevel::Warning => theme.warning,
@@ -1109,10 +1373,20 @@ impl CompressorView {
     }
 
     fn render_panels(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let content = if self.active_tab == TAB_DUPLICATES {
-            self.render_duplicates(cx)
+        let content = match self.active_tab {
+            TAB_DETECTED => self.render_detected(cx),
+            TAB_ERRORS => self.render_errors(cx),
+            TAB_DUPLICATES => self.render_duplicates(cx),
+            _ => self.render_activity(cx),
+        };
+        let detected_label = match &self.detected {
+            Some(report) => trf(self.language, "Detected ({})", &[&report.images.len()]),
+            None => self.tr("Detected"),
+        };
+        let errors_label = if self.issues.is_empty() {
+            self.tr("Errors")
         } else {
-            self.render_activity(cx)
+            trf(self.language, "Errors ({})", &[&self.issues.len()])
         };
         Self::card(cx)
             .flex_1()
@@ -1125,6 +1399,8 @@ impl CompressorView {
                         .selected_index(self.active_tab)
                         .on_click(cx.listener(Self::select_tab))
                         .child(Tab::new().label(self.tr("Activity")))
+                        .child(Tab::new().label(detected_label))
+                        .child(Tab::new().label(errors_label))
                         .child(Tab::new().label(self.tr("Duplicates"))),
                 ),
             )

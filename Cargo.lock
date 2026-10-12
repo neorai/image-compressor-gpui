@@ -3323,6 +3323,7 @@ name = "image-compressor"
 version = "0.2.2"
 dependencies = [
  "crossbeam-channel",
+ "embed-resource",
  "gpui-kit",
  "image",
  "rfd",
