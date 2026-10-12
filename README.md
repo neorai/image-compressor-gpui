@@ -26,8 +26,10 @@ needed.
 2. Set the JPEG quality (1–100) and the number of workers (1–32).
 3. Choose the options: skip images already recorded, convert the primary MPO image, and delete
    `Thumbs.db` files when finished (off by default).
-4. Press **Compress**. Progress, statistics, and recent activity update live; **Cancel** stops the
-   run after the image in progress.
+4. Press **Compress**. A live counter shows how many images are done out of the total, the elapsed
+   time, and an estimate of the time remaining (based on the speed of the last 20 seconds).
+   Statistics and recent activity update as well; **Cancel** stops the run after the image in
+   progress.
 
 The **Duplicates** tab lists images with identical content at different paths. The interface is
 available in English and Spanish and switches instantly from the selector in the header.

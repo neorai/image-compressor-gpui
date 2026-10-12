@@ -8,6 +8,17 @@ pub fn duration(duration: Duration) -> String {
     }
 }
 
+/// Formats a duration as a clock: `m:ss`, or `h:mm:ss` from one hour.
+pub fn clock(duration: Duration) -> String {
+    let total = duration.as_secs();
+    let (hours, minutes, seconds) = (total / 3600, total / 60 % 60, total % 60);
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes}:{seconds:02}")
+    }
+}
+
 pub fn signed_bytes(value: i128) -> String {
     if value < 0 {
         format!(
@@ -49,7 +60,16 @@ pub fn display_path(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{bytes, display_path, signed_bytes};
+    use std::time::Duration;
+
+    use super::{bytes, clock, display_path, signed_bytes};
+
+    #[test]
+    fn clock_shows_hours_only_when_needed() {
+        assert_eq!(clock(Duration::from_millis(9_900)), "0:09");
+        assert_eq!(clock(Duration::from_secs(125)), "2:05");
+        assert_eq!(clock(Duration::from_secs(3_725)), "1:02:05");
+    }
 
     #[test]
     fn byte_formatting_handles_positive_and_negative_savings() {

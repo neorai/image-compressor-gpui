@@ -294,3 +294,15 @@ msgstr "Proceso"
 
 msgid "Database"
 msgstr "Base de datos"
+
+msgid "{} of {} images ({}%)"
+msgstr "{} de {} imágenes ({} %)"
+
+msgid "Elapsed: {}"
+msgstr "Transcurrido: {}"
+
+msgid "About {} remaining"
+msgstr "Quedan aprox. {}"
+
+msgid "Estimating the time remaining…"
+msgstr "Calculando el tiempo restante…"

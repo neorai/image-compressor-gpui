@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -25,6 +25,7 @@ use crate::app::{ActivityEntry, AppController, AppError, AppEvent, EventSink, Ru
 use crate::domain::{RunState, RunStats, ValidationError};
 use crate::infrastructure::database::DuplicateReport;
 use crate::ports::LogLevel;
+use crate::ui::eta::RunClock;
 use crate::ui::format;
 use crate::ui::i18n::{Language, tr, trf};
 use crate::ui::messages;
@@ -34,6 +35,9 @@ const MAX_ACTIVITY_ROWS: usize = 250;
 /// How often the view drains events while a run is active; the coordinator
 /// already batches per-image results, so this only bounds UI latency.
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// The elapsed and remaining times are redrawn at least this often, even
+/// while a single slow image produces no events.
+const CLOCK_TICK: Duration = Duration::from_secs(1);
 
 const DEFAULT_QUALITY: i32 = 50;
 const TAB_ACTIVITY: usize = 0;
@@ -119,6 +123,7 @@ pub struct CompressorView {
     status_detail: String,
     stats: RunStats,
     current_file: String,
+    clock: Option<RunClock>,
     activity: VecDeque<ActivityRow>,
     next_activity_id: u64,
 
@@ -194,6 +199,7 @@ impl CompressorView {
             status_detail: String::new(),
             stats: RunStats::default(),
             current_file: String::new(),
+            clock: None,
             activity: VecDeque::new(),
             next_activity_id: 0,
             active_tab: TAB_ACTIVITY,
@@ -298,6 +304,7 @@ impl CompressorView {
         self.status_detail.clear();
         self.stats = RunStats::default();
         self.current_file.clear();
+        self.clock = Some(RunClock::start(Instant::now()));
         self.activity.clear();
         self.watch_job(receiver, cx);
         cx.notify();
@@ -323,6 +330,7 @@ impl CompressorView {
     /// run has its own channel, so a late event can never reach a newer run.
     fn watch_job(&mut self, receiver: Receiver<AppEvent>, cx: &mut Context<Self>) {
         self._job_events = Some(cx.spawn(async move |this, cx| {
+            let mut last_render = Instant::now();
             loop {
                 cx.background_executor().timer(EVENT_POLL_INTERVAL).await;
                 let mut events = Vec::new();
@@ -341,9 +349,10 @@ impl CompressorView {
                         }
                     }
                 }
-                if events.is_empty() && !disconnected {
+                if events.is_empty() && !disconnected && last_render.elapsed() < CLOCK_TICK {
                     continue;
                 }
+                last_render = Instant::now();
                 let updated = this.update(cx, |view, cx| {
                     for event in events {
                         view.apply_event(event, cx);
@@ -352,6 +361,7 @@ impl CompressorView {
                         // The coordinator ended without its final event.
                         view.set_run_state(RunState::Failed);
                         view.status_code = "thread-panicked";
+                        view.stop_clock();
                     }
                     cx.notify();
                 });
@@ -377,6 +387,9 @@ impl CompressorView {
                 stats,
                 current_file,
             } => {
+                if let Some(clock) = &mut self.clock {
+                    clock.record(Instant::now(), stats.completed, stats.total_found);
+                }
                 self.stats = stats;
                 self.current_file = current_file;
             }
@@ -389,6 +402,7 @@ impl CompressorView {
                 self.stats = stats;
                 self.set_run_state(state);
                 self.current_file.clear();
+                self.stop_clock();
                 match state {
                     RunState::Completed => {
                         if stats.has_incidents() {
@@ -408,6 +422,12 @@ impl CompressorView {
                 }
                 self.refresh_report(cx);
             }
+        }
+    }
+
+    fn stop_clock(&mut self) {
+        if let Some(clock) = &mut self.clock {
+            clock.stop(Instant::now());
         }
     }
 
@@ -717,6 +737,7 @@ impl CompressorView {
                     .value(self.stats.progress() * 100.0)
                     .loading(self.run_state == RunState::Scanning),
             )
+            .child(self.render_counters(cx))
             .child(
                 div()
                     .h_4()
@@ -726,6 +747,61 @@ impl CompressorView {
                     .text_ellipsis_start()
                     .text_color(cx.theme().muted_foreground)
                     .child(self.current_file.clone()),
+            )
+    }
+
+    /// Images completed out of the total, elapsed time, and the estimated
+    /// time remaining while images are being processed.
+    fn render_counters(&self, cx: &App) -> impl IntoElement {
+        let stats = self.stats;
+        let now = Instant::now();
+        let count = (self.run_state != RunState::Idle && stats.total_found > 0).then(|| {
+            let percent = stats.completed.saturating_mul(100) / stats.total_found;
+            trf(
+                self.language,
+                "{} of {} images ({}%)",
+                &[&stats.completed, &stats.total_found, &percent],
+            )
+        });
+        let timing = self.clock.as_ref().map(|clock| {
+            let elapsed = trf(
+                self.language,
+                "Elapsed: {}",
+                &[&format::clock(clock.elapsed(now))],
+            );
+            let estimating =
+                self.run_state == RunState::Processing && stats.completed < stats.total_found;
+            if !estimating {
+                return elapsed;
+            }
+            let remaining = match clock.remaining(now) {
+                Some(remaining) => trf(
+                    self.language,
+                    "About {} remaining",
+                    &[&format::clock(remaining)],
+                ),
+                None => self.tr("Estimating the time remaining…"),
+            };
+            format!("{elapsed} · {remaining}")
+        });
+
+        h_flex()
+            .h_5()
+            .gap_3()
+            .justify_between()
+            .text_sm()
+            .child(
+                div()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .whitespace_nowrap()
+                    .child(count.unwrap_or_default()),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(timing.unwrap_or_default()),
             )
     }
 
