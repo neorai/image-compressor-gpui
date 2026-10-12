@@ -84,10 +84,6 @@ pub fn activity(language: Language, code: &str, args: [i32; 3]) -> String {
             language,
             "The file could not be replaced; the original remains intact",
         ),
-        "persist-verification-failed" => tr(
-            language,
-            "The file was replaced, but persistence could not be confirmed",
-        ),
         "already-optimized-duplicates" => trf(
             language,
             "Already optimized; {} copies have the same content",
@@ -98,10 +94,6 @@ pub fn activity(language: Language, code: &str, args: [i32; 3]) -> String {
             language,
             "Kept the original; re-encoding at {}% would not reduce it ({} → {} KiB)",
             &[&a, &b, &c],
-        ),
-        "final-hash-failed" => tr(
-            language,
-            "Optimized, but the final hash could not be calculated",
         ),
         "database-record-failed" => tr(
             language,

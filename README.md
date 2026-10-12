@@ -49,8 +49,12 @@ header. **About** shows the version, the author, and the data folder.
 ## Features
 
 - Recursive scan of `.jpg` and `.jpeg` files, processed in parallel without blocking the interface.
-- Re-encoding at the chosen quality. A JPEG that would not get smaller is left unchanged, so
-  repeated runs never degrade it.
+- Re-encoding with [zenjpeg](https://lib.rs/crates/zenjpeg), a Rust port of Google's jpegli
+  encoder: 4:2:0 chroma, progressive scans, and optimized Huffman tables. On real photos it
+  produces files 37–66% smaller than a standard encoder at the same visual quality, at the same
+  speed. A JPEG that would not get smaller is left unchanged, so repeated runs never degrade it.
+- Each image is read once and written once, which keeps network shares (UNC paths and mapped
+  drives) fast: hashing, format detection, and the size comparison all work in memory.
 - EXIF orientation is applied to the pixels, so rotated photos stay upright, and the ICC color
   profile is preserved.
 - Primary image of MPO files and PNG/BMP/TIFF/WebP content saved with a JPEG extension.
@@ -73,24 +77,27 @@ Nothing is written to AppData or the registry. To move the application with its 
 executable and its `data` folder together; to upgrade, replace only the executable. If the folder
 is read-only, a dialog explains the problem at startup. The About dialog shows the exact path.
 
+If the executable is on a network share, the database switches from SQLite's WAL mode, which
+does not work over network file systems, to a rollback journal.
+
 The database contains the paths of your images, so treat it as private data. The log uses paths
 relative to the selected folder.
 
 ## Data safety
 
-- Each image is encoded into a temporary file in the same folder, synchronized to disk, and only
-  then atomically replaces the original. If anything fails before that point, the original is
-  untouched.
+- Each image is encoded in memory, written in one piece to a temporary file in the same folder,
+  synchronized to disk, and only then atomically replaces the original. If anything fails before
+  that point, the original is untouched; if the result would not be smaller, nothing is written.
 - Read-only files, symbolic links, and junctions are skipped.
 - Limits protect against oversized inputs: 250,000 JPEG files and 128 directory levels per run;
-  1 GiB, 20,000 pixels per side, and 40 million pixels per image.
+  256 MiB, 20,000 pixels per side, and 40 million pixels per image.
 - Closing the window during a run cancels it cleanly and leaves no temporary files.
 
 ## Known limitations
 
 - EXIF metadata other than orientation (camera, dates, GPS) is not copied to the compressed file.
 - Only the primary image of an MPO file is kept.
-- Cancellation waits for the image currently being decoded or encoded.
+- Cancellation stops an encoding in progress, but waits for an image that is being decoded.
 
 ## Building from source
 
@@ -132,5 +139,13 @@ Created by Robert ([github.com/neorai](https://github.com/neorai)).
 
 ## License
 
-MIT. GPUI Kit and GPUI are used under Apache-2.0; the icons are from [Lucide](https://lucide.dev)
-(ISC).
+Copyright (C) 2026 Robert (neorai).
+
+This program is free software: you can redistribute it and/or modify it under the terms of the
+[GNU Affero General Public License, version 3](LICENSE) (AGPL-3.0-only). It is distributed WITHOUT
+ANY WARRANTY.
+
+The AGPL applies because the JPEG encoder, zenjpeg, is offered under AGPL-3.0-only or a commercial
+license from Imazen. GPUI Kit and GPUI are used under Apache-2.0; the icons are from
+[Lucide](https://lucide.dev) (ISC). Every other dependency uses a permissive license compatible
+with the AGPL, which `cargo deny check` enforces.

@@ -232,17 +232,11 @@ msgstr "No se pudo escribir la imagen temporal; el original sigue intacto"
 msgid "The file could not be replaced; the original remains intact"
 msgstr "No se pudo reemplazar el archivo; el original sigue intacto"
 
-msgid "The file was replaced, but persistence could not be confirmed"
-msgstr "El archivo fue reemplazado, pero no se pudo confirmar su persistencia"
-
 msgid "Already optimized; {} copies have the same content"
 msgstr "Ya estaba optimizada; {} copias tienen el mismo contenido"
 
 msgid "Already optimized"
 msgstr "Ya estaba optimizada"
-
-msgid "Optimized, but the final hash could not be calculated"
-msgstr "Optimizada, pero no se pudo calcular el hash final"
 
 msgid "Optimized, but it could not be recorded in the database"
 msgstr "Optimizada, pero no se pudo registrar en la base de datos"
@@ -351,3 +345,6 @@ msgstr "Creado por {}"
 
 msgid "No errors or warnings so far."
 msgstr "Sin errores ni avisos por ahora."
+
+msgid "Free software under the GNU AGPL-3.0 license, distributed WITHOUT ANY WARRANTY. JPEG encoding by zenjpeg."
+msgstr "Software libre bajo la licencia GNU AGPL-3.0, distribuido SIN NINGUNA GARANTÍA. Codificación JPEG con zenjpeg."

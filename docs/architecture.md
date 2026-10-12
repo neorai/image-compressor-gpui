@@ -49,13 +49,25 @@ requested while one is loading is queued rather than dropped.
 ## Image pipeline
 
 1. Reject links, non-files, read-only files, and files over the size limit.
-2. Hash the original and skip it when the same content is already recorded for that path.
-3. Decode with dimension and allocation limits, apply the EXIF orientation to the pixels, and keep
+2. Read the file into memory once; every later step works on that buffer.
+3. Hash it and skip it when the same content is already recorded for that path.
+4. Decode with dimension and allocation limits, apply the EXIF orientation to the pixels, and keep
    the ICC profile.
-4. Encode to a temporary file in the same directory.
-5. If the source is a plain JPEG and the result is not smaller, discard the temporary file and
-   record the original, so later runs do not degrade it.
-6. Otherwise flush, synchronize, persist atomically, hash the result, and record it.
+5. Encode in memory with zenjpeg (4:2:0, progressive, optimized Huffman tables); the cancellation
+   flag is checked while rows are encoded.
+6. If the source is a plain JPEG and the result is not smaller, record the original without
+   writing anything, so later runs do not degrade it.
+7. Otherwise write the result to a temporary file in the same directory in one call, synchronize
+   it, persist it atomically, and record the hash of the encoded buffer.
+
+Per image this is one read and one write. The previous pipeline read each file three times and
+wrote the JPEG one byte per system call; measured on 102 photos it was 11 times slower on a local
+disk and 23 times slower over SMB. The rename after the flush only changes metadata, so the data
+is already durable and no second flush is needed.
+
+The database uses WAL with `synchronous = NORMAL` on local disks. When its folder resolves to a
+UNC path (including mapped drives), it uses a rollback journal with `synchronous = FULL`, because
+WAL relies on shared memory that network file systems do not provide.
 
 ## Threat model
 
@@ -70,8 +82,8 @@ Main mitigations:
   workers, and channel capacity.
 - Link or junction escape: links are not followed; canonical paths must remain under the root before
   processing or deleting.
-- Partial output loss: secure temporary file on the same volume, `flush`, `sync_all`, atomic persist,
-  and transactional SQLite updates.
+- Partial output loss: secure temporary file on the same volume, `sync_all`, atomic persist, and
+  transactional SQLite updates.
 - UI starvation: disk, decoding, hashing, and SQL run off the UI thread; updates are batched.
 - Log injection or leakage: control characters and length are restricted and image paths are relative.
 - Future or corrupt database: explicit errors and rejection of unsupported `user_version` values.
@@ -88,7 +100,9 @@ unsafe code, which this implementation deliberately avoids without platform-spec
 - Analyzing a folder lists its JPEG files and sizes and leaves every file unchanged.
 - A valid JPEG is replaced, recorded, and counted; a second run is skipped.
 - A rotated camera JPEG keeps its visible orientation after compression.
-- A JPEG that would grow is left byte-for-byte unchanged and skipped on the next run.
+- A JPEG that would grow is left byte-for-byte unchanged, no temporary file is created, and it is
+  skipped on the next run.
+- The ICC color profile survives compression.
 - Every interface string has a Spanish catalog entry and the catalog has no unused entries.
 - A corrupt JPEG, escaped path, or failure before persist leaves the input intact.
 - A database failure after replacement is shown as a partial result.
@@ -98,6 +112,11 @@ unsafe code, which this implementation deliberately avoids without platform-spec
 
 ## Trade-offs
 
+- **zenjpeg (AGPL-3.0-only):** the best size for a given visual quality among the encoders
+  measured (on par with mozjpeg, 37–66% smaller than the previous encoder) at the previous speed,
+  in pure Rust without unsafe code. Its license makes the whole application AGPL-3.0-only.
+- **Whole-file reads:** one read per image instead of three, at the cost of holding the input in
+  memory, bounded by the 256 MiB input limit per worker.
 - **Bundled SQLite:** a self-contained executable at the cost of longer builds and a larger binary.
 - **GPUI Kit:** a GPU-accelerated interface with themed, accessible components, at the cost of a
   larger dependency tree and a GPU driver requirement (DirectX 11 on Windows).

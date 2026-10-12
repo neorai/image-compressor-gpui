@@ -2,19 +2,21 @@
 name = "image-compressor"
 version = "0.3.0"
 edition = "2024"
-rust-version = "1.92"
+rust-version = "1.93"
 description = "Desktop JPEG compressor built with Rust and GPUI Kit"
-license = "MIT"
+license = "AGPL-3.0-only"
 publish = false
 
 [dependencies]
 crossbeam-channel = "0.5.16"
+enough = "0.4.5"
 gpui-kit = "0.7.1"
 image = { version = "0.25.10", default-features = false, features = ["bmp", "jpeg", "png", "tiff", "webp"] }
 rfd = "0.17.2"
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 sha2 = "0.11.0"
 tempfile = "3.27.0"
+zenjpeg = { version = "0.8.4", default-features = false, features = ["yuv"] }
 
 [dev-dependencies]
 serde_json = "1.0.150"

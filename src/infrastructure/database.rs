@@ -25,8 +25,17 @@ impl ImageDatabase {
         connection
             .busy_timeout(Duration::from_secs(30))
             .map_err(DatabaseError::Sqlite)?;
+        // WAL needs shared memory between connections, which network file
+        // systems do not provide, so a database on a share uses a rollback
+        // journal. Locally, WAL with NORMAL sync is crash-safe and needs far
+        // fewer flushes than the default FULL.
+        let journal = if is_on_network_share(path) {
+            "PRAGMA journal_mode = DELETE; PRAGMA synchronous = FULL;"
+        } else {
+            "PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;"
+        };
         connection
-            .execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")
+            .execute_batch(&format!("PRAGMA foreign_keys = ON; {journal}"))
             .map_err(DatabaseError::Sqlite)?;
         Ok(Self { connection })
     }
@@ -239,6 +248,20 @@ fn registry_error(error: rusqlite::Error) -> RegistryError {
     RegistryError::new(error.to_string())
 }
 
+/// Whether the database folder is on a network share. Windows resolves a
+/// mapped network drive to its `\\?\UNC\server\share` form, so this also
+/// covers drive letters such as `Z:`.
+fn is_on_network_share(database: &Path) -> bool {
+    database
+        .parent()
+        .and_then(|folder| folder.canonicalize().ok())
+        .is_some_and(|folder| is_network_path(&folder.to_string_lossy()))
+}
+
+fn is_network_path(path: &str) -> bool {
+    path.starts_with(r"\\?\UNC\") || (path.starts_with(r"\\") && !path.starts_with(r"\\?\"))
+}
+
 fn non_negative_usize(value: i64) -> usize {
     usize::try_from(value.max(0)).unwrap_or(usize::MAX)
 }
@@ -271,8 +294,16 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use super::{ImageDatabase, load_duplicate_report, wasted_space};
+    use super::{ImageDatabase, is_network_path, load_duplicate_report, wasted_space};
     use crate::ports::ImageRegistry;
+
+    #[test]
+    fn network_paths_are_recognized() {
+        assert!(is_network_path(r"\\?\UNC\nas\datos\app\data"));
+        assert!(is_network_path(r"\\server\share\data"));
+        assert!(!is_network_path(r"\\?\C:\Programs\app\data"));
+        assert!(!is_network_path(r"C:\Programs\app\data"));
+    }
 
     #[test]
     fn recording_same_path_replaces_its_previous_hash() -> Result<(), Box<dyn std::error::Error>> {

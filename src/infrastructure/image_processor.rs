@@ -1,24 +1,25 @@
 use std::fs::{self, File};
-use std::io::{self, BufReader, Read, Write};
+use std::io::{self, Cursor, Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use image::codecs::jpeg::JpegEncoder;
+use enough::{Stop, StopReason};
 use image::metadata::Orientation;
-use image::{
-    DynamicImage, ImageDecoder, ImageEncoder, ImageError, ImageFormat, ImageReader, Limits,
-};
+use image::{DynamicImage, ImageDecoder, ImageError, ImageFormat, ImageReader, Limits};
 use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 use crate::domain::{ImageOutcome, ProcessingPolicy, SkipReason};
 use crate::ports::{ImageRegistry, LogLevel, RegistryError};
 
-const MAX_INPUT_BYTES: u64 = 1024 * 1024 * 1024;
+/// Each image is read into memory once, so this also bounds the memory a
+/// worker holds for the encoded input.
+const MAX_INPUT_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_IMAGE_DIMENSION: u32 = 20_000;
 const MAX_IMAGE_PIXELS: u64 = 40_000_000;
 const MAX_DECODE_ALLOCATION: u64 = 192 * 1024 * 1024;
-const MPO_HEADER_SCAN_BYTES: u64 = 1024 * 1024;
+const MPO_HEADER_SCAN_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug)]
 pub struct ProcessedFile {
@@ -160,8 +161,12 @@ fn process_image_inner<R: ImageRegistry>(
         return Err(ProcessError::PathEscaped);
     }
 
-    let current_hash = generate_hash(&canonical_path, Some(cancelled))?;
+    // The file is read once; hashing, format detection, decoding, and the
+    // size comparison all work on this buffer, which matters most on network
+    // shares where every extra read or open is a round trip.
+    let original = read_limited(&canonical_path)?;
     check_cancelled(cancelled)?;
+    let current_hash = sha256_hex(&original);
     if policy.verify_hash
         && let Some(processed) = registry
             .processed_image(&current_hash, &canonical_path)
@@ -194,16 +199,13 @@ fn process_image_inner<R: ImageRegistry>(
         ));
     }
 
-    let mpo = is_mpo(&canonical_path).map_err(ProcessError::ReadMpo)?;
+    let mpo = is_mpo(&original);
     if mpo && !policy.process_mpo {
         return Err(ProcessError::MpoDisabled);
     }
     check_cancelled(cancelled)?;
 
-    let reader = ImageReader::open(&canonical_path)
-        .map_err(ProcessError::OpenImage)?
-        .with_guessed_format()
-        .map_err(ProcessError::GuessFormat)?;
+    let reader = image_reader(&original)?;
     let format = reader.format().ok_or(ProcessError::UnsupportedFormat)?;
     if !matches!(
         format,
@@ -223,10 +225,7 @@ fn process_image_inner<R: ImageRegistry>(
         )));
     }
 
-    let mut reader = ImageReader::open(&canonical_path)
-        .map_err(ProcessError::OpenImage)?
-        .with_guessed_format()
-        .map_err(ProcessError::GuessFormat)?;
+    let mut reader = image_reader(&original)?;
     let mut limits = Limits::default();
     limits.max_image_width = Some(MAX_IMAGE_DIMENSION);
     limits.max_image_height = Some(MAX_IMAGE_DIMENSION);
@@ -242,41 +241,18 @@ fn process_image_inner<R: ImageRegistry>(
     decoded.apply_orientation(orientation);
     check_cancelled(cancelled)?;
 
-    let rgb = decoded.into_rgb8();
-    let parent = canonical_path.parent().ok_or(ProcessError::MissingParent)?;
-    let mut temporary = NamedTempFile::new_in(parent).map_err(ProcessError::CreateTemporary)?;
-    {
-        let mut encoder =
-            JpegEncoder::new_with_quality(temporary.as_file_mut(), policy.quality.get());
-        if let Some(icc_profile) = icc_profile {
-            encoder
-                .set_icc_profile(icc_profile)
-                .map_err(|error| ProcessError::Encode(ImageError::Unsupported(error)))?;
-        }
-        encoder.encode_image(&rgb).map_err(ProcessError::Encode)?;
-    }
-    temporary
-        .as_file_mut()
-        .flush()
-        .map_err(ProcessError::FlushTemporary)?;
-    temporary
-        .as_file_mut()
-        .sync_all()
-        .map_err(ProcessError::SyncTemporary)?;
-    fs::set_permissions(temporary.path(), metadata.permissions())
-        .map_err(ProcessError::SetPermissions)?;
-    check_cancelled(cancelled)?;
-
-    let before = metadata.len();
-    let after = temporary
-        .as_file()
-        .metadata()
-        .map_err(ProcessError::TemporaryMetadata)?
-        .len();
+    let encoded = encode_jpeg(
+        &decoded.into_rgb8(),
+        policy.quality.get(),
+        icc_profile.as_deref(),
+        cancelled,
+    )?;
+    let before = u64::try_from(original.len()).unwrap_or(u64::MAX);
+    let after = u64::try_from(encoded.len()).unwrap_or(u64::MAX);
     if format == ImageFormat::Jpeg && !mpo && after >= before {
-        // Re-encoding would only lose quality without saving space. The
-        // temporary file is discarded on return and the original is recorded
-        // so the next run skips it.
+        // Re-encoding would only lose quality without saving space. Nothing
+        // has been written, and the original is recorded so the next run
+        // skips it.
         let recorded = registry.record_image(&current_hash, &canonical_path, policy.quality.get());
         let (level, diagnostic) = match recorded {
             Ok(()) => (LogLevel::Info, None),
@@ -296,31 +272,29 @@ fn process_image_inner<R: ImageRegistry>(
             diagnostic,
         ));
     }
-    let persisted = temporary
+    check_cancelled(cancelled)?;
+
+    // One write and one flush to a temporary file on the same volume, then an
+    // atomic rename. The rename only updates metadata, so the data is already
+    // durable when it happens and no second flush is needed.
+    let parent = canonical_path.parent().ok_or(ProcessError::MissingParent)?;
+    let mut temporary = NamedTempFile::new_in(parent).map_err(ProcessError::CreateTemporary)?;
+    temporary
+        .as_file_mut()
+        .write_all(&encoded)
+        .map_err(ProcessError::WriteTemporary)?;
+    temporary
+        .as_file_mut()
+        .sync_all()
+        .map_err(ProcessError::SyncTemporary)?;
+    fs::set_permissions(temporary.path(), metadata.permissions())
+        .map_err(ProcessError::SetPermissions)?;
+    check_cancelled(cancelled)?;
+    temporary
         .persist(&canonical_path)
         .map_err(|error| ProcessError::Persist(error.error))?;
-    if let Err(error) = persisted.sync_all() {
-        return Ok(ProcessedFile::with_diagnostic(
-            ImageOutcome::Partial { before, after },
-            LogLevel::Error,
-            "the file was replaced, but persistence could not be confirmed",
-            "persist-verification-failed",
-            format!("final sync: {error}"),
-        ));
-    }
 
-    let new_hash = match generate_hash(&canonical_path, None) {
-        Ok(hash) => hash,
-        Err(error) => {
-            return Ok(ProcessedFile::with_diagnostic(
-                ImageOutcome::Partial { before, after },
-                LogLevel::Error,
-                "optimized, but the final hash could not be calculated",
-                "final-hash-failed",
-                error.to_string(),
-            ));
-        }
-    };
+    let new_hash = sha256_hex(&encoded);
     if let Err(error) = registry.record_image(&new_hash, &canonical_path, policy.quality.get()) {
         return Ok(ProcessedFile::with_diagnostic(
             ImageOutcome::Partial { before, after },
@@ -361,36 +335,93 @@ fn decode_error(error: ImageError) -> ProcessError {
     }
 }
 
-fn generate_hash(path: &Path, cancelled: Option<&AtomicBool>) -> Result<String, ProcessError> {
-    let file = File::open(path).map_err(ProcessError::Hash)?;
-    let mut reader = BufReader::with_capacity(64 * 1024, file);
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        if let Some(cancelled) = cancelled {
-            check_cancelled(cancelled)?;
-        }
-        let count = reader.read(&mut buffer).map_err(ProcessError::Hash)?;
-        if count == 0 {
-            break;
-        }
-        hasher.update(&buffer[..count]);
+/// Reads the whole file, refusing one that grew past the limit after the
+/// metadata check.
+fn read_limited(path: &Path) -> Result<Vec<u8>, ProcessError> {
+    let file = File::open(path).map_err(ProcessError::Read)?;
+    let expected = file.metadata().map_or(0, |metadata| metadata.len());
+    let mut bytes = Vec::with_capacity(usize::try_from(expected.min(MAX_INPUT_BYTES)).unwrap_or(0));
+    file.take(MAX_INPUT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(ProcessError::Read)?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_INPUT_BYTES {
+        return Err(ProcessError::ResourceLimit(format!(
+            "the file exceeds {} MiB",
+            MAX_INPUT_BYTES / 1024 / 1024
+        )));
     }
+    Ok(bytes)
+}
+
+/// Detects the format from the content. Every scanned file has a JPEG
+/// extension, so content without a recognizable signature is decoded as JPEG
+/// and reported as a decoding error rather than skipped.
+fn image_reader(bytes: &[u8]) -> Result<ImageReader<Cursor<&[u8]>>, ProcessError> {
+    let mut reader = ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(ProcessError::GuessFormat)?;
+    if reader.format().is_none() {
+        reader.set_format(ImageFormat::Jpeg);
+    }
+    Ok(reader)
+}
+
+/// Encodes with zenjpeg: 4:2:0 chroma, progressive scans, and optimized
+/// Huffman tables. The cancellation flag is checked while rows are encoded.
+fn encode_jpeg(
+    rgb: &image::RgbImage,
+    quality: u8,
+    icc_profile: Option<&[u8]>,
+    cancelled: &AtomicBool,
+) -> Result<Vec<u8>, ProcessError> {
+    let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter).progressive(true);
+    let mut request = config.request();
+    if let Some(icc_profile) = icc_profile {
+        request = request.icc_profile(icc_profile);
+    }
+    let encode = || {
+        let mut encoder =
+            request.encode_from_bytes(rgb.width(), rgb.height(), PixelLayout::Rgb8Srgb)?;
+        encoder.push_packed(rgb.as_raw(), CancelFlag(cancelled))?;
+        encoder.finish()
+    };
+    encode().map_err(|error| {
+        if cancelled.load(Ordering::Relaxed) {
+            ProcessError::Cancelled
+        } else {
+            ProcessError::Encode(error.to_string())
+        }
+    })
+}
+
+/// Lets the encoder stop between rows when the run is cancelled.
+struct CancelFlag<'a>(&'a AtomicBool);
+
+impl Stop for CancelFlag<'_> {
+    fn check(&self) -> Result<(), StopReason> {
+        if self.0.load(Ordering::Relaxed) {
+            Err(StopReason::Cancelled)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
-    let digest = hasher.finalize();
+    let digest = Sha256::digest(bytes);
     let mut encoded = String::with_capacity(digest.len() * 2);
     for byte in digest.iter().copied() {
         encoded.push(char::from(HEX[usize::from(byte >> 4)]));
         encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
     }
-    Ok(encoded)
+    encoded
 }
 
-fn is_mpo(path: &Path) -> io::Result<bool> {
-    let file = File::open(path)?;
-    let mut header = Vec::with_capacity(MPO_HEADER_SCAN_BYTES as usize);
-    file.take(MPO_HEADER_SCAN_BYTES).read_to_end(&mut header)?;
-    Ok(header.windows(4).any(|window| window == b"MPF\0"))
+/// MPO files carry an "MPF" APP2 segment near the start of the file.
+fn is_mpo(bytes: &[u8]) -> bool {
+    let header = &bytes[..bytes.len().min(MPO_HEADER_SCAN_BYTES)];
+    header.windows(4).any(|window| window == b"MPF\0")
 }
 
 fn check_cancelled(cancelled: &AtomicBool) -> Result<(), ProcessError> {
@@ -409,21 +440,18 @@ enum ProcessError {
     PathEscaped,
     ReadOnly,
     ResourceLimit(String),
-    Hash(io::Error),
+    Read(io::Error),
     Registry(RegistryError),
-    ReadMpo(io::Error),
     MpoDisabled,
-    OpenImage(io::Error),
     GuessFormat(io::Error),
     UnsupportedFormat,
     Dimensions(ImageError),
     Decode(ImageError),
     MissingParent,
     CreateTemporary(io::Error),
-    Encode(ImageError),
-    FlushTemporary(io::Error),
+    Encode(String),
+    WriteTemporary(io::Error),
     SyncTemporary(io::Error),
-    TemporaryMetadata(io::Error),
     SetPermissions(io::Error),
     Persist(io::Error),
 }
@@ -431,19 +459,14 @@ enum ProcessError {
 impl ProcessError {
     fn message_code(&self) -> &'static str {
         match self {
-            Self::Metadata(_) | Self::Canonicalize(_) | Self::Hash(_) | Self::ReadMpo(_) => {
-                "read-failed"
-            }
+            Self::Metadata(_) | Self::Canonicalize(_) | Self::Read(_) => "read-failed",
             Self::PathEscaped => "path-escaped",
             Self::ReadOnly => "read-only",
-            Self::OpenImage(_) | Self::GuessFormat(_) | Self::Dimensions(_) | Self::Decode(_) => {
-                "decode-failed"
-            }
+            Self::GuessFormat(_) | Self::Dimensions(_) | Self::Decode(_) => "decode-failed",
             Self::MissingParent | Self::CreateTemporary(_) => "temporary-create-failed",
-            Self::Encode(_)
-            | Self::FlushTemporary(_)
-            | Self::SyncTemporary(_)
-            | Self::TemporaryMetadata(_) => "temporary-write-failed",
+            Self::Encode(_) | Self::WriteTemporary(_) | Self::SyncTemporary(_) => {
+                "temporary-write-failed"
+            }
             Self::SetPermissions(_) | Self::Persist(_) => "replace-failed",
             Self::Cancelled => "cancelled",
             Self::ResourceLimit(_) => "resource-limit",
@@ -455,21 +478,18 @@ impl ProcessError {
 
     fn user_message(&self) -> &'static str {
         match self {
-            Self::Metadata(_) | Self::Canonicalize(_) | Self::Hash(_) | Self::ReadMpo(_) => {
+            Self::Metadata(_) | Self::Canonicalize(_) | Self::Read(_) => {
                 "the file could not be read; it was not changed"
             }
             Self::PathEscaped => "file skipped because it is no longer inside the selected folder",
             Self::ReadOnly => "the file is read-only; it was not changed",
-            Self::OpenImage(_) | Self::GuessFormat(_) | Self::Dimensions(_) | Self::Decode(_) => {
+            Self::GuessFormat(_) | Self::Dimensions(_) | Self::Decode(_) => {
                 "the image could not be decoded; it was not changed"
             }
             Self::MissingParent | Self::CreateTemporary(_) => {
                 "the temporary file could not be created; the original remains intact"
             }
-            Self::Encode(_)
-            | Self::FlushTemporary(_)
-            | Self::SyncTemporary(_)
-            | Self::TemporaryMetadata(_) => {
+            Self::Encode(_) | Self::WriteTemporary(_) | Self::SyncTemporary(_) => {
                 "the temporary image could not be written; the original remains intact"
             }
             Self::SetPermissions(_) | Self::Persist(_) => {
@@ -493,11 +513,9 @@ impl std::fmt::Display for ProcessError {
             Self::PathEscaped => formatter.write_str("the path escaped the authorized root"),
             Self::ReadOnly => formatter.write_str("read-only file"),
             Self::ResourceLimit(message) => formatter.write_str(message),
-            Self::Hash(error) => write!(formatter, "hash: {error}"),
+            Self::Read(error) => write!(formatter, "read: {error}"),
             Self::Registry(error) => write!(formatter, "registry: {error}"),
-            Self::ReadMpo(error) => write!(formatter, "MPO header: {error}"),
             Self::MpoDisabled => formatter.write_str("MPO processing disabled"),
-            Self::OpenImage(error) => write!(formatter, "open: {error}"),
             Self::GuessFormat(error) => write!(formatter, "format detection: {error}"),
             Self::UnsupportedFormat => formatter.write_str("unsupported format"),
             Self::Dimensions(error) => write!(formatter, "dimensions: {error}"),
@@ -505,9 +523,8 @@ impl std::fmt::Display for ProcessError {
             Self::MissingParent => formatter.write_str("file has no parent directory"),
             Self::CreateTemporary(error) => write!(formatter, "temporary file: {error}"),
             Self::Encode(error) => write!(formatter, "encode: {error}"),
-            Self::FlushTemporary(error) => write!(formatter, "temporary flush: {error}"),
+            Self::WriteTemporary(error) => write!(formatter, "temporary write: {error}"),
             Self::SyncTemporary(error) => write!(formatter, "temporary sync: {error}"),
-            Self::TemporaryMetadata(error) => write!(formatter, "temporary metadata: {error}"),
             Self::SetPermissions(error) => write!(formatter, "permissions: {error}"),
             Self::Persist(error) => write!(formatter, "atomic replacement: {error}"),
         }
@@ -636,6 +653,43 @@ mod tests {
             second.outcome,
             ImageOutcome::Skipped(SkipReason::AlreadyOptimized { .. })
         ));
+        // zenjpeg writes a progressive (SOF2) frame.
+        let output = std::fs::read(&path)?;
+        assert!(output.windows(2).any(|marker| marker == [0xFF, 0xC2]));
+        Ok(())
+    }
+
+    #[test]
+    fn icc_profile_is_kept() -> TestResult {
+        let directory = tempdir()?;
+        let path = directory.path().join("profiled.jpg");
+        let profile: Vec<u8> = (0..=255).collect();
+        let image = RgbImage::from_fn(64, 64, |x, y| Rgb([(x * 4) as u8, (y * 4) as u8, 128]));
+        {
+            // The encoder owns the file; it must be closed before the
+            // replacement, which Windows refuses for an open file.
+            let mut encoder = JpegEncoder::new_with_quality(File::create(&path)?, 100);
+            encoder.set_icc_profile(profile.clone())?;
+            encoder.encode_image(&image)?;
+        }
+        let root = directory.path().canonicalize()?;
+
+        let result = process_image(
+            &root,
+            &path,
+            policy(40)?,
+            &mut MemoryRegistry::default(),
+            &AtomicBool::new(false),
+        );
+
+        assert!(matches!(result.outcome, ImageOutcome::Success { .. }));
+        let mut decoder = image::ImageReader::open(&path)?
+            .with_guessed_format()?
+            .into_decoder()?;
+        assert_eq!(
+            image::ImageDecoder::icc_profile(&mut decoder)?,
+            Some(profile)
+        );
         Ok(())
     }
 
@@ -686,6 +740,8 @@ mod tests {
 
         assert_eq!(first.outcome, ImageOutcome::Skipped(SkipReason::NotSmaller));
         assert_eq!(std::fs::read(&path)?, before);
+        // The size is compared in memory, so no temporary file was created.
+        assert_eq!(std::fs::read_dir(directory.path())?.count(), 1);
         assert!(matches!(
             second.outcome,
             ImageOutcome::Skipped(SkipReason::AlreadyOptimized { .. })

@@ -644,7 +644,11 @@ impl CompressorView {
                                 .text_sm()
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .child(tr(language, "Built with GPUI Kit")),
-                        ),
+                        )
+                        .child(div().text_xs().text_color(muted).child(tr(
+                            language,
+                            "Free software under the GNU AGPL-3.0 license, distributed WITHOUT ANY WARRANTY. JPEG encoding by zenjpeg.",
+                        ))),
                 )
                 .footer(
                     h_flex().w_full().justify_end().child(

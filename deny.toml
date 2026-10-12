@@ -38,6 +38,14 @@ allow = [
     "Zlib",
 ]
 confidence-threshold = 0.9
+# The application is AGPL-3.0-only because its JPEG encoder, zenjpeg, is
+# offered under AGPL-3.0-only (or a commercial license). Every other
+# dependency must stay under one of the licenses above, all of which are
+# compatible with AGPL-3.0.
+exceptions = [
+    { crate = "image-compressor", allow = ["AGPL-3.0-only"] },
+    { crate = "zenjpeg", allow = ["AGPL-3.0-only"] },
+]
 
 [bans]
 # GPUI pulls several major versions of common crates; duplicates are expected.

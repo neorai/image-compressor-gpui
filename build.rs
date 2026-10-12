@@ -43,7 +43,7 @@ BEGIN
       VALUE "FileDescription", "Image Compressor"
       VALUE "FileVersion", "{version}"
       VALUE "InternalName", "image-compressor"
-      VALUE "LegalCopyright", "Copyright (c) 2026 Robert (neorai). MIT License."
+      VALUE "LegalCopyright", "Copyright (c) 2026 Robert (neorai). GNU AGPL-3.0-only."
       VALUE "OriginalFilename", "image-compressor.exe"
       VALUE "ProductName", "Image Compressor"
       VALUE "ProductVersion", "{version}"
