@@ -3320,7 +3320,7 @@ dependencies = [
 
 [[package]]
 name = "image-compressor"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "crossbeam-channel",
  "embed-resource",
