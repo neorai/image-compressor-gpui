@@ -51,10 +51,11 @@ requested while one is loading is queued rather than dropped.
 1. Reject links, non-files, read-only files, and files over the size limit.
 2. Read the file into memory once; every later step works on that buffer.
 3. Hash it and skip it when the same content is already recorded for that path.
-4. Decode with dimension and allocation limits, apply the EXIF orientation to the pixels, and keep
-   the ICC profile.
+4. Wait for a share of the pixel budget, then decode with dimension and allocation limits, apply
+   the EXIF orientation to the pixels, and keep the ICC profile.
 5. Encode in memory with zenjpeg (4:2:0, progressive, optimized Huffman tables); the cancellation
-   flag is checked while rows are encoded.
+   flag is checked while rows are encoded. The pixel share is released once the encoded buffer
+   exists.
 6. If the source is a plain JPEG and the result is not smaller, record the original without
    writing anything, so later runs do not degrade it.
 7. Otherwise write the result to a temporary file in the same directory in one call, synchronize
@@ -79,7 +80,9 @@ persisted database, and concurrent filesystem changes.
 Main mitigations:
 
 - Resource exhaustion: limits for entries, depth, files, bytes, dimensions, decoder allocation,
-  workers, and channel capacity.
+  workers, and channel capacity. Decoding and encoding take about 6 bytes per pixel (345 MiB for
+  a 55.6 MP photo), so all workers share a budget of 500 megapixels in flight; an image larger
+  than the budget runs alone.
 - Link or junction escape: links are not followed; canonical paths must remain under the root before
   processing or deleting.
 - Partial output loss: secure temporary file on the same volume, `sync_all`, atomic persist, and

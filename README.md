@@ -90,7 +90,11 @@ relative to the selected folder.
   that point, the original is untouched; if the result would not be smaller, nothing is written.
 - Read-only files, symbolic links, and junctions are skipped.
 - Limits protect against oversized inputs: 250,000 JPEG files and 128 directory levels per run;
-  256 MiB, 20,000 pixels per side, and 40 million pixels per image.
+  256 MiB, 20,000 pixels per side, and 250 megapixels per image, enough for 150 MP
+  medium-format cameras.
+- Memory stays bounded with large photos: the workers share a budget of 500 megapixels being
+  decoded and encoded at once (about 3 GiB), so very large images wait for each other instead of
+  exhausting memory.
 - Closing the window during a run cancels it cleanly and leaves no temporary files.
 
 ## Known limitations

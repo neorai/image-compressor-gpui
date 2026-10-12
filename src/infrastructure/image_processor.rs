@@ -11,15 +11,22 @@ use tempfile::NamedTempFile;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 use crate::domain::{ImageOutcome, ProcessingPolicy, SkipReason};
+use crate::infrastructure::pixel_budget::PixelBudget;
 use crate::ports::{ImageRegistry, LogLevel, RegistryError};
 
 /// Each image is read into memory once, so this also bounds the memory a
 /// worker holds for the encoded input.
 const MAX_INPUT_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_IMAGE_DIMENSION: u32 = 20_000;
-const MAX_IMAGE_PIXELS: u64 = 40_000_000;
-const MAX_DECODE_ALLOCATION: u64 = 192 * 1024 * 1024;
+/// Covers 150-megapixel medium-format cameras and large panoramas.
+const MAX_IMAGE_PIXELS: u64 = 250_000_000;
+/// The largest image at 16-bit RGBA, the widest pixel format decoded.
+const MAX_DECODE_ALLOCATION: u64 = MAX_IMAGE_PIXELS * 8;
+/// Pixels decoded and encoded at once across all workers, about 3 GiB.
+const PIXELS_IN_FLIGHT: u64 = 500_000_000;
 const MPO_HEADER_SCAN_BYTES: usize = 1024 * 1024;
+
+static PIXEL_BUDGET: PixelBudget = PixelBudget::new(PIXELS_IN_FLIGHT);
 
 #[derive(Debug)]
 pub struct ProcessedFile {
@@ -225,6 +232,9 @@ fn process_image_inner<R: ImageRegistry>(
         )));
     }
 
+    let lease = PIXEL_BUDGET
+        .acquire(pixels, cancelled)
+        .ok_or(ProcessError::Cancelled)?;
     let mut reader = image_reader(&original)?;
     let mut limits = Limits::default();
     limits.max_image_width = Some(MAX_IMAGE_DIMENSION);
@@ -247,6 +257,7 @@ fn process_image_inner<R: ImageRegistry>(
         icc_profile.as_deref(),
         cancelled,
     )?;
+    drop(lease);
     let before = u64::try_from(original.len()).unwrap_or(u64::MAX);
     let after = u64::try_from(encoded.len()).unwrap_or(u64::MAX);
     if format == ImageFormat::Jpeg && !mpo && after >= before {
@@ -542,11 +553,20 @@ mod tests {
     use image::{ImageEncoder, Rgb, RgbImage};
     use tempfile::tempdir;
 
-    use super::process_image;
+    use super::{MAX_IMAGE_DIMENSION, MAX_IMAGE_PIXELS, process_image};
     use crate::domain::{ImageOutcome, JpegQuality, ProcessingPolicy, SkipReason, WorkerCount};
     use crate::ports::{ImageRegistry, ProcessedImage, RegistryError};
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn large_camera_photos_are_within_the_limits() {
+        // 55.6 MP (reported by a user), 102 MP and 151 MP medium-format sensors.
+        for (width, height) in [(8_608_u32, 6_456_u32), (11_648, 8_736), (14_204, 10_652)] {
+            assert!(width.max(height) <= MAX_IMAGE_DIMENSION);
+            assert!(u64::from(width) * u64::from(height) <= MAX_IMAGE_PIXELS);
+        }
+    }
 
     #[derive(Default)]
     struct MemoryRegistry {
