@@ -25,9 +25,10 @@ needed.
 ## Usage
 
 1. Choose a folder with **Browse…** or type its path (local and UNC paths are supported).
-2. Set the JPEG quality (1–100) and the number of workers (1–32).
+2. Set the JPEG quality (1–100, default 30) and the number of workers (1–32; by default one per
+   logical CPU, up to 32).
 3. Choose the options: skip images already recorded, convert the primary MPO image, and delete
-   `Thumbs.db` files when finished (off by default).
+   `Thumbs.db` files when finished. All three are on by default.
 4. Optionally press **Analyze folder** to see how many images the folder contains, and their
    total size, without changing anything. The list appears in the **Detected** tab.
 5. Press **Compress**. A live counter shows how many images are done out of the total, the elapsed
@@ -55,7 +56,7 @@ header. **About** shows the version, the author, and the data folder.
 - Primary image of MPO files and PNG/BMP/TIFF/WebP content saved with a JPEG extension.
 - SHA-256 hashes before and after compression; already processed files are skipped on later runs.
 - Duplicate report grouped by content.
-- Optional `Thumbs.db` removal, limited to the selected folder.
+- `Thumbs.db` removal (on by default, can be turned off), limited to the selected folder.
 
 ## Where data is stored
 

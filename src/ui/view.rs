@@ -47,7 +47,7 @@ const CLOCK_TICK: Duration = Duration::from_secs(1);
 /// The errors tab keeps the most recent errors and warnings of a run.
 const MAX_ISSUE_ROWS: usize = 5_000;
 
-const DEFAULT_QUALITY: i32 = 50;
+const DEFAULT_QUALITY: i32 = 30;
 const TAB_ACTIVITY: usize = 0;
 const TAB_DETECTED: usize = 1;
 const TAB_ERRORS: usize = 2;
@@ -219,7 +219,7 @@ impl CompressorView {
             workers_input,
             verify_hash: true,
             process_mpo: true,
-            delete_thumbs: false,
+            delete_thumbs: true,
             run_state: RunState::Idle,
             status_kind: StatusKind::Idle,
             status_code: "idle",

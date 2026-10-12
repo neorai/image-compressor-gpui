@@ -245,9 +245,10 @@ impl AppController {
         &self.paths.data_dir
     }
 
+    /// One worker per logical CPU, up to the supported maximum.
     pub fn default_worker_count() -> i32 {
         let available = thread::available_parallelism().map_or(4, std::num::NonZero::get);
-        i32::try_from(available.clamp(1, 4)).unwrap_or(4)
+        i32::try_from(available.clamp(1, crate::domain::MAX_WORKERS)).unwrap_or(4)
     }
 
     pub fn shutdown(&self) -> Result<(), AppError> {
