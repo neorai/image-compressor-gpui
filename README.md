@@ -1,136 +1,117 @@
-# Image Compressor (Rust + GPUI Kit)
+# Image Compressor
 
-A local desktop application that recreates and extends the original Python project. It scans a
-folder recursively for `.jpg` and `.jpeg` files, re-encodes them with configurable JPEG quality,
-tracks content hashes in SQLite, reports duplicates, and can remove `Thumbs.db` files. The
-interface is built with [GPUI Kit](https://github.com/longbridge/gpui-kit); disk and CPU work runs
-outside the UI thread.
+A portable Windows desktop application that compresses the JPEG images in a folder and its
+subfolders, keeps a history of every processed file, and finds duplicate images. Everything runs
+locally: images never leave the computer.
 
-> **Important:** compression replaces each original JPEG. Replacement is atomic, but the
-> application does not keep a backup. Test with a copy of your images first. `Thumbs.db` deletion
-> is optional and disabled by default.
+It is written in Rust with a [GPUI Kit](https://github.com/longbridge/gpui-kit) interface and the
+[Dracula](https://draculatheme.com) color palette.
 
-## Requirements
+> **Important:** compression replaces each original JPEG. The replacement is atomic, but no backup
+> is kept. Try it on a copy of your images first.
 
-- Windows 10 or later, or another desktop platform supported by GPUI and Rust.
-- Rust 1.96 as pinned in `rust-toolchain.toml`.
-- A GPU driver with DirectX 11 (Windows), Metal (macOS), or Vulkan (Linux), as required by GPUI.
-- Recommended reference hardware: 4 CPU cores, 4 GiB RAM, and an 860 × 640 display or larger.
-- No network connection is required. Images never leave the computer.
-- Windows UNC paths are supported when the current user has read and write permission.
+## Download
 
-## Interface languages
+Get `image-compressor-<version>-windows-x64.exe` from the
+[Releases](https://github.com/neorai/image-compressor-gpui/releases) page and check it against
+`SHA256SUMS.txt`. There is nothing to install: put the executable in a **writable** folder and run
+it.
 
-English is the source language and the default on every system. Use the language selector in the
-window header to switch to Spanish at runtime. Controls, status messages, validation errors,
-activity rows, reports, the window title, and the About dialog all update immediately. Spanish
-text comes from the bundled gettext catalog in `translations/`; a test fails if an interface
-string has no translation or the catalog keeps an unused entry.
+Requirements: Windows 10 or 11 (x64) and a GPU driver with DirectX 11. No network connection is
+needed.
+
+## Usage
+
+1. Choose a folder with **Browse…** or type its path (local and UNC paths are supported).
+2. Set the JPEG quality (1–100) and the number of workers (1–32).
+3. Choose the options: skip images already recorded, convert the primary MPO image, and delete
+   `Thumbs.db` files when finished (off by default).
+4. Press **Compress**. Progress, statistics, and recent activity update live; **Cancel** stops the
+   run after the image in progress.
+
+The **Duplicates** tab lists images with identical content at different paths. The interface is
+available in English and Spanish and switches instantly from the selector in the header.
 
 ## Features
 
-- Graphical folder picker plus manual entry for local and UNC paths.
-- Bounded parallel processing with 1–32 workers.
-- JPEG, primary MPO image, and recognizable PNG/BMP/TIFF/WebP content stored with a JPEG extension.
-- EXIF orientation is applied to the pixels, so rotated camera photos keep displaying upright, and
-  the ICC color profile is preserved.
-- A JPEG whose re-encoded version would not be smaller is kept unchanged and recorded, so it is
-  not degraded by repeated runs.
-- SHA-256 before and after compression.
-- Idempotent SQLite records by path and duplicate grouping by content.
-- Progress, recent activity (newest first), aligned statistics, cooperative cancellation, and
-  duplicate reports that refresh after each run.
-- Optional `Thumbs.db` cleanup after confirming every candidate remains inside the selected root.
-- A 5 MiB activity log that rotates while the application runs, without full root paths in
-  per-image messages.
-- A dark interface with the [Dracula](https://draculatheme.com) color palette (`src/ui/dracula.json`).
+- Recursive scan of `.jpg` and `.jpeg` files, processed in parallel without blocking the interface.
+- Re-encoding at the chosen quality. A JPEG that would not get smaller is left unchanged, so
+  repeated runs never degrade it.
+- EXIF orientation is applied to the pixels, so rotated photos stay upright, and the ICC color
+  profile is preserved.
+- Primary image of MPO files and PNG/BMP/TIFF/WebP content saved with a JPEG extension.
+- SHA-256 hashes before and after compression; already processed files are skipped on later runs.
+- Duplicate report grouped by content.
+- Optional `Thumbs.db` removal, limited to the selected folder.
 
-## Build and run
+## Where data is stored
 
-```powershell
-cargo run --release
+On startup the application creates a `data` folder **next to the executable**:
+
+```text
+image-compressor.exe
+data/
+  images.db          SQLite history: paths, hashes, quality, and dates
+  compression.log    Activity log (rotated to compression.log.1 at 5 MiB)
 ```
 
-Quality checks:
+Nothing is written to AppData or the registry. To move the application with its history, move the
+executable and its `data` folder together; to upgrade, replace only the executable. If the folder
+is read-only, a dialog explains the problem at startup. The About dialog shows the exact path.
 
-```powershell
-cargo fmt --all -- --check
-cargo check --all-targets
-cargo test
-cargo clippy --all-targets -- -D warnings
-cargo deny check
-```
+The database contains the paths of your images, so treat it as private data. The log uses paths
+relative to the selected folder.
 
-Build the distributable binary:
+## Data safety
+
+- Each image is encoded into a temporary file in the same folder, synchronized to disk, and only
+  then atomically replaces the original. If anything fails before that point, the original is
+  untouched.
+- Read-only files, symbolic links, and junctions are skipped.
+- Limits protect against oversized inputs: 250,000 JPEG files and 128 directory levels per run;
+  1 GiB, 20,000 pixels per side, and 40 million pixels per image.
+- Closing the window during a run cancels it cleanly and leaves no temporary files.
+
+## Known limitations
+
+- EXIF metadata other than orientation (camera, dates, GPS) is not copied to the compressed file.
+- Only the primary image of an MPO file is kept.
+- Cancellation waits for the image currently being decoded or encoded.
+
+## Building from source
+
+Requires Rust 1.96 (pinned in `rust-toolchain.toml`).
 
 ```powershell
 cargo build --release
 ```
 
-The resulting executable is `target/release/image-compressor.exe`. Copy it to any writable
-folder; `dist/` is ignored by Git for local builds.
+The executable is written to `target/release/image-compressor.exe`.
 
-## Portable local data
+Quality checks, also run by CI on every push:
 
-On startup, the application creates a `data` folder in the executable's directory:
+```powershell
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+cargo deny check
+```
 
-- `data/images.db` stores hashes, paths, JPEG quality, and timestamps.
-- `data/compression.log` stores activity; one `.log.1` generation is retained after 5 MiB.
-
-No application file is written to AppData. The executable directory therefore needs write
-permission; if it is read-only, the application explains the problem in a dialog instead of
-exiting silently. Keep the executable and its `data` folder together to move the application with
-its history. The About dialog and duplicate report show the exact effective path.
-
-The database uses `PRAGMA user_version = 1`. Before a future destructive migration, copy the
-database, migrate inside a transaction, and restore the copy if migration fails.
-
-## Data safety and limits
-
-- Symbolic links and detected junctions are not followed during scanning.
-- The selected root and every image are canonicalized before processing.
-- Read-only images are reported and left untouched.
-- Each run is limited to 250,000 JPEG files, 1,000,000 entries, and 128 directory levels.
-- Each input is limited to 1 GiB, 20,000 pixels per side, 40 million pixels, and 192 MiB of requested
-  decoder allocation.
-- Output is encoded into a secure temporary file in the same directory, flushed, synchronized, and
-  atomically persisted. Only then is the final hash calculated and SQLite updated.
-- If SQLite fails after replacement, the result is reported as partial instead of success.
-- Cancellation is checked between phases. An active decoder or encoder cannot be interrupted in the
-  middle; if replacement has not happened, the temporary file is discarded and the original stays.
-  Closing the window during a run cancels it the same way before the process exits.
-
-The database stores image paths and the duplicate view exposes them. Treat the database and report
-screenshots as potentially sensitive local data. The activity log uses paths relative to the chosen
-folder.
-
-## Project layout
+### Project layout
 
 ```text
 src/domain/          Validated types, states, and statistics
-src/app.rs           Coordination, cancellation, bounded channels, workers
-src/ports/           Small registry and observability traits
-src/infrastructure/  SQLite, image processing, hashing, scanning, paths, logging
-src/ui/              GPUI Kit view, localized messages, formatting, and i18n
-translations/        Bundled Spanish gettext catalog
+src/app.rs           Run coordination, cancellation, and workers
+src/ports/           Registry and logging traits
+src/infrastructure/  SQLite, image processing, hashing, scanning, paths, and logging
+src/ui/              GPUI Kit view, theme, messages, and localization
+translations/        Spanish gettext catalog
 docs/                Architecture and risk notes
 ```
 
-See [docs/architecture.md](docs/architecture.md) for acceptance criteria, security boundaries, and
-known trade-offs.
-
-## Known limitations
-
-- MPO processing keeps only the primary decodable image, matching the original workflow.
-- Other EXIF metadata (camera, dates, GPS) is not copied to the re-encoded file, matching the
-  original workflow; orientation is applied to the pixels instead.
-- Cancellation is not instantaneous inside a decoder or encoder call.
-- Power-loss resilience depends on the filesystem and storage device, even though temporary and
-  final files are synchronized.
-- Physical failures such as a full disk, power loss, or a junction swap during processing need a
-  controlled test machine or volume and are not automated in CI.
+See [docs/architecture.md](docs/architecture.md) for the design, threat model, and trade-offs.
 
 ## License
 
-Application code is distributed under MIT. GPUI Kit and GPUI are used under the Apache-2.0
-license; the default icons are from [Lucide](https://lucide.dev) (ISC).
+MIT. GPUI Kit and GPUI are used under Apache-2.0; the icons are from [Lucide](https://lucide.dev)
+(ISC).

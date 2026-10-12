@@ -7,15 +7,13 @@
 3. Calculate SHA-256 and skip a content/path pair that is already recorded.
 4. Store path, hash, quality, and date in SQLite and detect one hash at multiple paths.
 5. Support the primary MPO image and recognizable image content renamed with a JPEG extension.
-6. Offer `Thumbs.db` cleanup and the duplicate report that previously lived in a separate script.
+6. Offer `Thumbs.db` cleanup and a duplicate report.
 7. Keep English as the source/default language and offer runtime Spanish localization.
 8. Store all application-owned files in `data/` next to the executable.
 
 ## Boundaries and assumptions
 
 - The application uses no network service and stores no secrets. User paths are private data.
-- The Python database is not imported silently because its location may differ and automatic import
-  could mix histories. A compatible database can be copied manually before first launch.
 - Data protection has priority over peak throughput, so parallelism and resource use are bounded.
 - The executable directory must be writable so the portable `data` directory can be created.
 
